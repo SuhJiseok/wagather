@@ -399,6 +399,11 @@ input::placeholder {
   background: #ff9a82;
 }
 
+.mode-pill.preview {
+  color: #13220a;
+  background: #9de7bd;
+}
+
 .watch-sidebar {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;

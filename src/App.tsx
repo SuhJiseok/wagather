@@ -68,6 +68,7 @@ type SlowPrompt = {
 
 const STORAGE_NICKNAME = "watchme:nickname";
 const STORAGE_PARTICIPANT = "watchme:participant";
+const STATIC_ROOM_PREFIX = "watchme:static-room:";
 const DRIFT_THRESHOLD = 3;
 
 function getParticipantId() {
@@ -88,6 +89,70 @@ function formatTime(seconds: number) {
 function getRoomIdFromPath() {
   const match = window.location.pathname.match(/^\/room\/([^/]+)/);
   return match?.[1] || null;
+}
+
+function extractYouTubeId(input: string) {
+  try {
+    const url = new URL(input.trim());
+    if (url.hostname.includes("youtu.be")) {
+      return url.pathname.split("/").filter(Boolean)[0] || null;
+    }
+    if (url.hostname.includes("youtube.com")) {
+      if (url.pathname === "/watch") return url.searchParams.get("v");
+      if (url.pathname.startsWith("/shorts/")) return url.pathname.split("/").filter(Boolean)[1] || null;
+      if (url.pathname.startsWith("/embed/")) return url.pathname.split("/").filter(Boolean)[1] || null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function makeLocalRoomId() {
+  return `PREVIEW-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+}
+
+function getStaticRoomVideoId(roomId: string) {
+  const params = new URLSearchParams(window.location.search);
+  const queryVideo = params.get("video");
+  if (queryVideo) return queryVideo;
+
+  try {
+    const saved = localStorage.getItem(`${STATIC_ROOM_PREFIX}${roomId}`);
+    if (!saved) return null;
+    const parsed = JSON.parse(saved) as { videoId?: string };
+    return parsed.videoId || null;
+  } catch {
+    return null;
+  }
+}
+
+function makeStaticRoomState(roomId: string, videoId: string, participantId: string, nickname: string): RoomState {
+  return {
+    id: roomId,
+    videoId,
+    hostId: participantId,
+    controlId: participantId,
+    playback: {
+      state: "paused",
+      time: 0,
+      updatedAt: Date.now()
+    },
+    participants: [
+      {
+        id: participantId,
+        nickname,
+        isHost: true,
+        canControl: true,
+        localMode: "synced",
+        playerState: "paused",
+        currentTime: 0,
+        drift: 0,
+        updatedAt: Date.now()
+      }
+    ],
+    messages: []
+  };
 }
 
 function hasPlayerApi(player: YouTubePlayer | null): player is YouTubePlayer {
@@ -134,17 +199,31 @@ function HomePage() {
     setLoading(true);
 
     try {
+      const trimmedName = nickname.trim();
       const response = await fetch("/api/rooms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ youtubeUrl, nickname })
+        body: JSON.stringify({ youtubeUrl, nickname: trimmedName })
       });
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        throw new Error("static-preview");
+      }
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "방을 만들 수 없습니다.");
-      localStorage.setItem(STORAGE_NICKNAME, nickname.trim());
+      localStorage.setItem(STORAGE_NICKNAME, trimmedName);
       window.location.href = data.inviteUrl;
     } catch (error) {
-      setError(error instanceof Error ? error.message : "다시 시도해 주세요.");
+      const videoId = extractYouTubeId(youtubeUrl);
+      const trimmedName = nickname.trim();
+      if (videoId && trimmedName) {
+        const roomId = makeLocalRoomId();
+        localStorage.setItem(STORAGE_NICKNAME, trimmedName);
+        localStorage.setItem(`${STATIC_ROOM_PREFIX}${roomId}`, JSON.stringify({ videoId, createdAt: Date.now() }));
+        window.location.href = `/room/${roomId}?video=${encodeURIComponent(videoId)}&preview=1`;
+        return;
+      }
+      setError(error instanceof Error && error.message !== "static-preview" ? error.message : "유튜브 링크를 확인해 주세요.");
     } finally {
       setLoading(false);
     }
@@ -215,6 +294,8 @@ function HomePage() {
 }
 
 function RoomPage({ roomId }: { roomId: string }) {
+  const staticVideoId = useMemo(() => getStaticRoomVideoId(roomId), [roomId]);
+  const isStaticPreview = Boolean(staticVideoId);
   const [nickname, setNickname] = useState(() => localStorage.getItem(STORAGE_NICKNAME) || "");
   const [joinName, setJoinName] = useState(nickname);
   const [joined, setJoined] = useState(Boolean(nickname));
@@ -241,7 +322,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const selfId = participantIdRef.current;
   const self = room?.participants.find((participant) => participant.id === selfId) || null;
   const canControl = Boolean(self?.canControl && localMode !== "freeplay");
-  const inviteUrl = `${window.location.origin}/room/${roomId}`;
+  const inviteUrl = isStaticPreview ? window.location.href : `${window.location.origin}/room/${roomId}`;
 
   useEffect(() => {
     roomRef.current = room;
@@ -253,6 +334,12 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   useEffect(() => {
     if (!joined || !nickname) return;
+    if (isStaticPreview && staticVideoId) {
+      const nextRoom = makeStaticRoomState(roomId, staticVideoId, selfId, nickname);
+      setRoom(nextRoom);
+      setMessages(nextRoom.messages);
+      return;
+    }
 
     const socket = io();
     socketRef.current = socket;
@@ -289,7 +376,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [joined, nickname, roomId, selfId]);
+  }, [isStaticPreview, joined, nickname, roomId, selfId, staticVideoId]);
 
   useEffect(() => {
     if (!room?.videoId) return;
@@ -441,7 +528,9 @@ function RoomPage({ roomId }: { roomId: string }) {
   function updateLocalMode(mode: LocalMode) {
     setLocalMode(mode);
     localModeRef.current = mode;
-    socketRef.current?.emit("sync-choice", { roomId, participantId: selfId, mode });
+    if (!isStaticPreview) {
+      socketRef.current?.emit("sync-choice", { roomId, participantId: selfId, mode });
+    }
   }
 
   function chooseWait() {
@@ -475,6 +564,20 @@ function RoomPage({ roomId }: { roomId: string }) {
     event.preventDefault();
     const text = messageText.trim();
     if (!text) return;
+    if (isStaticPreview) {
+      const message: ChatMessage = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        type: "chat",
+        authorId: selfId,
+        author: nickname,
+        text,
+        videoTime: hasPlayerApi(playerRef.current) ? playerRef.current.getCurrentTime() : localTime,
+        createdAt: Date.now()
+      };
+      setMessages((current) => [...current, message].slice(-80));
+      setMessageText("");
+      return;
+    }
     socketRef.current?.emit("chat-message", {
       roomId,
       participantId: selfId,
@@ -485,6 +588,19 @@ function RoomPage({ roomId }: { roomId: string }) {
   }
 
   function sendEmoji(emoji: string) {
+    if (isStaticPreview) {
+      const message: ChatMessage = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        type: "emoji",
+        authorId: selfId,
+        author: nickname,
+        text: emoji,
+        videoTime: hasPlayerApi(playerRef.current) ? playerRef.current.getCurrentTime() : localTime,
+        createdAt: Date.now()
+      };
+      setMessages((current) => [...current, message].slice(-80));
+      return;
+    }
     socketRef.current?.emit("emoji-reaction", {
       roomId,
       participantId: selfId,
@@ -494,6 +610,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   }
 
   function grantControl(targetId: string) {
+    if (isStaticPreview) return;
     socketRef.current?.emit("grant-control", { roomId, participantId: selfId, targetId });
   }
 
@@ -578,10 +695,11 @@ function RoomPage({ roomId }: { roomId: string }) {
               <p className="room-kicker">ROOM {roomId}</p>
               <h1>같이 보기 방</h1>
             </div>
-            <div className={`mode-pill ${localMode}`}>
-              {localMode === "synced" && "같이 보는 중"}
-              {localMode === "waiting" && "잠깐 쉬는 중"}
-              {localMode === "freeplay" && "먼저 보는 중"}
+            <div className={`mode-pill ${isStaticPreview ? "preview" : localMode}`}>
+              {isStaticPreview && "프론트 미리보기"}
+              {!isStaticPreview && localMode === "synced" && "같이 보는 중"}
+              {!isStaticPreview && localMode === "waiting" && "잠깐 쉬는 중"}
+              {!isStaticPreview && localMode === "freeplay" && "먼저 보는 중"}
             </div>
           </div>
         </div>
