@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.playwright-mcp/
+
+*.log
+watchme-room-*.png
+
+.DS_Store
+Thumbs.db
+.env
+.env.*
