@@ -86,6 +86,13 @@ function emitRoom(room) {
   io.to(room.id).emit("room-state", serializeRoom(room));
 }
 
+function clearCountdown(room) {
+  if (room.countdownTimer) {
+    clearTimeout(room.countdownTimer);
+    room.countdownTimer = null;
+  }
+}
+
 function getRoomOrError(roomId, socket) {
   const room = rooms.get(roomId);
   if (!room) socket.emit("room-error", "방을 찾을 수 없습니다.");
@@ -121,6 +128,7 @@ app.post("/api/rooms", (req, res) => {
       time: 0,
       updatedAt: Date.now()
     },
+    countdownTimer: null,
     participants: new Map(),
     messages: []
   });
@@ -182,12 +190,36 @@ io.on("connection", (socket) => {
     const normalized = normalizedPlayback(room);
     const nextTime = Number.isFinite(time) ? Math.max(0, Number(time)) : normalized.time;
 
-    if (action === "seek") {
-      room.playback = { state: normalized.state, time: nextTime, updatedAt: Date.now() };
+    if (action === "play") {
+      clearCountdown(room);
+      const now = Date.now();
+      const playAt = now + 3000;
+      room.playback = { state: "paused", time: nextTime, updatedAt: now };
+      io.to(roomId).emit("play-countdown", {
+        sourceId: id,
+        playback: normalizedPlayback(room),
+        playAt
+      });
+      room.countdownTimer = setTimeout(() => {
+        room.playback = { state: "playing", time: nextTime, updatedAt: Date.now() };
+        room.countdownTimer = null;
+        io.to(roomId).emit("remote-command", {
+          sourceId: "system",
+          action: "play",
+          playback: normalizedPlayback(room)
+        });
+        emitRoom(room);
+      }, 3000);
+      room.lastActivity = now;
+      emitRoom(room);
+      return;
     }
 
-    if (action === "play") {
-      room.playback = { state: "playing", time: nextTime, updatedAt: Date.now() };
+    clearCountdown(room);
+    io.to(roomId).emit("countdown-cancelled");
+
+    if (action === "seek") {
+      room.playback = { state: normalized.state, time: nextTime, updatedAt: Date.now() };
     }
 
     if (action === "pause") {

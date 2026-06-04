@@ -322,6 +322,39 @@ input::placeholder {
   transform: translateX(-50%);
 }
 
+.countdown-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 9, 8, 0.56);
+  backdrop-filter: blur(10px);
+}
+
+.countdown-dialog {
+  display: grid;
+  min-width: min(320px, 100%);
+  place-items: center;
+  padding: 30px;
+  color: var(--accent-ink);
+  background: var(--accent);
+  box-shadow: var(--shadow);
+  animation: prompt-in 180ms ease both;
+}
+
+.countdown-dialog p {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 950;
+}
+
+.countdown-dialog strong {
+  font-size: clamp(72px, 18vw, 140px);
+  line-height: 0.9;
+}
+
 .watch-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);

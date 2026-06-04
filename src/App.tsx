@@ -61,6 +61,12 @@ type RemoteCommand = {
   playback: RoomState["playback"];
 };
 
+type CountdownCommand = {
+  sourceId: string;
+  playback: RoomState["playback"];
+  playAt: number;
+};
+
 type SlowPrompt = {
   nickname: string;
   seconds: number;
@@ -84,6 +90,11 @@ function formatTime(seconds: number) {
   const minutes = Math.floor(safe / 60);
   const rest = safe % 60;
   return `${minutes}:${rest.toString().padStart(2, "0")}`;
+}
+
+function getPlaybackTime(playback: RoomState["playback"]) {
+  if (playback.state !== "playing") return playback.time;
+  return Math.max(0, playback.time + (Date.now() - playback.updatedAt) / 1000);
 }
 
 function getRoomIdFromPath() {
@@ -307,6 +318,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [localTime, setLocalTime] = useState(0);
   const [playerReady, setPlayerReady] = useState(false);
   const [slowPrompt, setSlowPrompt] = useState<SlowPrompt | null>(null);
+  const [countdown, setCountdown] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [mobileTab, setMobileTab] = useState<"chat" | "people">("chat");
 
@@ -318,6 +330,10 @@ function RoomPage({ roomId }: { roomId: string }) {
   const waitHoldTimeRef = useRef<number | null>(null);
   const roomRef = useRef<RoomState | null>(null);
   const localModeRef = useRef<LocalMode>("synced");
+  const countdownActiveRef = useRef(false);
+  const countdownIntervalRef = useRef<number | null>(null);
+  const countdownTimeoutRef = useRef<number | null>(null);
+  const lastBlockedNoticeRef = useRef(0);
 
   const selfId = participantIdRef.current;
   const self = room?.participants.find((participant) => participant.id === selfId) || null;
@@ -370,6 +386,15 @@ function RoomPage({ roomId }: { roomId: string }) {
       if (command.sourceId === selfId) return;
       if (localModeRef.current !== "synced") return;
       applyRemoteCommand(command);
+    });
+
+    socket.on("play-countdown", (command: CountdownCommand) => {
+      if (localModeRef.current !== "synced") return;
+      startCountdown(command);
+    });
+
+    socket.on("countdown-cancelled", () => {
+      clearCountdown();
     });
 
     return () => {
@@ -429,6 +454,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       const stateCode = hasPlayerApi(player) ? player.getPlayerState() : undefined;
       const playerState = stateCode === window.YT?.PlayerState.PLAYING ? "playing" : "paused";
       setLocalTime(currentTime);
+      enforceRoomPlayback();
       socketRef.current?.emit("heartbeat", {
         roomId,
         participantId: selfId,
@@ -443,6 +469,7 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   useEffect(() => {
     if (!room || !playerReady || localMode !== "synced") return;
+    if (countdownActiveRef.current) return;
     const player = playerRef.current;
     if (!hasPlayerApi(player) || player.getPlayerState() !== window.YT?.PlayerState.PLAYING) return;
 
@@ -498,11 +525,30 @@ function RoomPage({ roomId }: { roomId: string }) {
   function handlePlayerStateChange(data: number | undefined) {
     if (!window.YT || data === undefined) return;
     if (applyingRemoteRef.current || suppressCommandRef.current) return;
-    if (!canControl) return;
+    if (!canControl) {
+      if (!isStaticPreview && localModeRef.current === "synced") {
+        showControlBlockedNotice();
+        enforceRoomPlayback();
+      }
+      return;
+    }
 
     const player = playerRef.current;
     const time = hasPlayerApi(player) ? player.getCurrentTime() : 0;
     if (data === window.YT.PlayerState.PLAYING) {
+      suppressCommandRef.current = true;
+      player?.pauseVideo();
+      window.setTimeout(() => {
+        suppressCommandRef.current = false;
+      }, 300);
+      if (isStaticPreview) {
+        startCountdown({
+          sourceId: selfId,
+          playback: { state: "paused", time, updatedAt: Date.now() },
+          playAt: Date.now() + 3000
+        }, true);
+        return;
+      }
       socketRef.current?.emit("playback-command", { roomId, participantId: selfId, action: "play", time });
     }
     if (data === window.YT.PlayerState.PAUSED) {
@@ -511,6 +557,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   }
 
   function applyRemoteCommand(command: RemoteCommand) {
+    clearCountdown();
     const player = playerRef.current;
     if (!hasPlayerApi(player)) return;
     applyingRemoteRef.current = true;
@@ -523,6 +570,95 @@ function RoomPage({ roomId }: { roomId: string }) {
     window.setTimeout(() => {
       applyingRemoteRef.current = false;
     }, 400);
+  }
+
+  function clearCountdown() {
+    if (countdownIntervalRef.current) {
+      window.clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+    if (countdownTimeoutRef.current) {
+      window.clearTimeout(countdownTimeoutRef.current);
+      countdownTimeoutRef.current = null;
+    }
+    countdownActiveRef.current = false;
+    setCountdown(null);
+  }
+
+  function startCountdown(command: CountdownCommand, playLocally = false) {
+    clearCountdown();
+    countdownActiveRef.current = true;
+    const player = playerRef.current;
+    if (hasPlayerApi(player)) {
+      applyingRemoteRef.current = true;
+      player.seekTo(command.playback.time, true);
+      player.pauseVideo();
+      window.setTimeout(() => {
+        applyingRemoteRef.current = false;
+      }, 400);
+    }
+
+    const updateCount = () => {
+      const remaining = Math.ceil((command.playAt - Date.now()) / 1000);
+      setCountdown(Math.max(1, remaining));
+    };
+
+    updateCount();
+    countdownIntervalRef.current = window.setInterval(updateCount, 150);
+    countdownTimeoutRef.current = window.setTimeout(() => {
+      clearCountdown();
+      if (playLocally && hasPlayerApi(playerRef.current)) {
+        applyingRemoteRef.current = true;
+        playerRef.current.playVideo();
+        window.setTimeout(() => {
+          applyingRemoteRef.current = false;
+        }, 500);
+      }
+    }, Math.max(0, command.playAt - Date.now()));
+  }
+
+  function enforceRoomPlayback() {
+    const player = playerRef.current;
+    const currentRoom = roomRef.current;
+    if (
+      !hasPlayerApi(player) ||
+      !currentRoom ||
+      isStaticPreview ||
+      localModeRef.current !== "synced" ||
+      countdownActiveRef.current
+    ) {
+      return;
+    }
+
+    const currentSelf = currentRoom.participants.find((participant) => participant.id === selfId);
+    if (!currentSelf || currentSelf.canControl) return;
+
+    const roomTime = getPlaybackTime(currentRoom.playback);
+    const playerTime = player.getCurrentTime();
+    const stateCode = player.getPlayerState();
+    const shouldPlay = currentRoom.playback.state === "playing";
+    const isPlaying = stateCode === window.YT?.PlayerState.PLAYING;
+    const isPaused = stateCode === window.YT?.PlayerState.PAUSED;
+    const needsSeek = Math.abs(playerTime - roomTime) > 1.1;
+    const needsStateFix = shouldPlay ? !isPlaying : !isPaused;
+
+    if (!needsSeek && !needsStateFix) return;
+
+    applyingRemoteRef.current = true;
+    if (needsSeek) player.seekTo(roomTime, true);
+    if (shouldPlay) player.playVideo();
+    if (!shouldPlay) player.pauseVideo();
+    window.setTimeout(() => {
+      applyingRemoteRef.current = false;
+    }, 400);
+  }
+
+  function showControlBlockedNotice() {
+    const now = Date.now();
+    if (now - lastBlockedNoticeRef.current < 2200) return;
+    lastBlockedNoticeRef.current = now;
+    setSystemNote("방장만 영상을 조작할 수 있어요.");
+    window.setTimeout(() => setSystemNote(""), 2200);
   }
 
   function updateLocalMode(mode: LocalMode) {
@@ -678,6 +814,14 @@ function RoomPage({ roomId }: { roomId: string }) {
       </header>
 
       {systemNote && <div className="toast">{systemNote}</div>}
+      {countdown !== null && (
+        <div className="countdown-layer" role="status" aria-live="polite">
+          <div className="countdown-dialog">
+            <p>곧 같이 재생돼요</p>
+            <strong>{countdown}</strong>
+          </div>
+        </div>
+      )}
 
       <section className="watch-layout">
         <div className="watch-main">
