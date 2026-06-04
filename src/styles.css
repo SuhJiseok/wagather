@@ -760,22 +760,33 @@ input::placeholder {
 
 @media (max-width: 640px) {
   .room-shell {
-    padding: 12px;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100svh;
+    min-height: 0;
+    overflow: hidden;
+    padding: 8px;
   }
 
-  .room-header,
-  .below-player {
-    align-items: flex-start;
-    flex-direction: column;
+  .room-header {
+    min-height: 36px;
+    margin-bottom: 8px;
+    align-items: center;
+    gap: 8px;
   }
 
   .room-actions {
-    justify-content: stretch;
-    width: 100%;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    gap: 6px;
+    width: auto;
   }
 
   .room-actions .ghost-button {
-    flex: 1 1 150px;
+    flex: 0 1 auto;
+    min-height: 34px;
+    padding: 0 10px;
+    font-size: 12px;
   }
 
   .home-visual,
@@ -788,20 +799,234 @@ input::placeholder {
   }
 
   .watch-main {
-    grid-template-rows: minmax(220px, 58vw) auto;
+    grid-template-rows: auto auto;
+    min-height: 0;
+  }
+
+  .watch-layout {
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 8px;
+    min-height: 0;
+    height: 100%;
   }
 
   .player-frame,
   .youtube-player,
   .youtube-player iframe {
-    min-height: 220px;
+    min-height: 0;
+    height: auto;
+    aspect-ratio: 16 / 9;
   }
 
-  .emoji-row {
-    grid-template-columns: repeat(3, 1fr);
+  .below-player {
+    align-items: center;
+    flex-direction: row;
+    gap: 8px;
+    padding: 8px 0 0;
+  }
+
+  .below-player h1 {
+    font-size: 28px;
+  }
+
+  .room-kicker {
+    margin-bottom: 5px;
+    font-size: 10px;
+  }
+
+  .mode-pill {
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  .watch-sidebar {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 6px;
+    min-height: 0;
+  }
+
+  .watch-sidebar:has(.pause-prompt) {
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
+  .pause-prompt {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .prompt-icon {
+    display: none;
+  }
+
+  .pause-prompt p {
+    font-size: 15px;
+  }
+
+  .pause-prompt span {
+    font-size: 12px;
   }
 
   .prompt-actions {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .mobile-tabs {
+    gap: 6px;
+  }
+
+  .mobile-tabs button,
+  .prompt-actions button {
+    min-height: 34px;
+    font-size: 13px;
+  }
+
+  .sidebar-section {
+    padding: 10px;
+  }
+
+  .sidebar-section.mobile-active {
+    min-height: 0;
+    height: 100%;
+  }
+
+  .section-title {
+    margin-bottom: 8px;
+  }
+
+  .section-title h2 {
+    font-size: 16px;
+  }
+
+  .message-list {
+    gap: 6px;
+  }
+
+  .message {
+    padding: 7px 0;
+  }
+
+  .message p {
+    margin-top: 4px;
+    font-size: 13px;
+  }
+
+  .emoji-row {
+    grid-template-columns: repeat(6, 1fr);
+    gap: 4px;
+    margin-top: 6px;
+  }
+
+  .emoji-row button {
+    min-height: 32px;
+    font-size: 13px;
+    padding: 0;
+  }
+
+  .chat-form {
+    grid-template-columns: 1fr 38px;
+    gap: 6px;
+    margin-top: 6px;
+  }
+
+  .chat-form input {
+    min-height: 38px;
+    font-size: 13px;
+  }
+
+  .chat-form button {
+    min-height: 38px;
+  }
+
+  .participant-list {
+    gap: 4px;
+    align-content: start;
+    overflow-y: auto;
+  }
+
+  .participant {
+    padding: 7px 0;
+  }
+
+  .avatar {
+    width: 30px;
+    height: 30px;
+  }
+
+  .participant span {
+    max-width: 230px;
+  }
+}
+
+@media (max-width: 390px), (max-height: 740px) {
+  .room-shell {
+    padding: 6px;
+  }
+
+  .room-header {
+    margin-bottom: 6px;
+  }
+
+  .brand-mark.compact {
+    font-size: 15px;
+    gap: 7px;
+  }
+
+  .brand-mark.compact svg {
+    width: 19px;
+    height: 19px;
+  }
+
+  .room-actions .ghost-button {
+    min-height: 31px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+
+  .watch-layout {
+    gap: 6px;
+  }
+
+  .below-player {
+    padding-top: 6px;
+  }
+
+  .below-player h1 {
+    font-size: 24px;
+  }
+
+  .mode-pill {
+    padding: 7px 9px;
+    font-size: 12px;
+  }
+
+  .mobile-tabs button {
+    min-height: 32px;
+  }
+
+  .sidebar-section {
+    padding: 8px;
+  }
+
+  .section-title {
+    display: none;
+  }
+
+  .chat-section {
+    grid-template-rows: minmax(0, 1fr) auto auto;
+  }
+
+  .people-section {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .emoji-row button {
+    min-height: 30px;
+  }
+
+  .chat-form input,
+  .chat-form button {
+    min-height: 36px;
   }
 }
