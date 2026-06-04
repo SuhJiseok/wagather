@@ -31,6 +31,21 @@ body,
   margin: 0;
 }
 
+html.room-scroll-lock,
+body.room-scroll-lock,
+body.room-scroll-lock #root {
+  width: 100%;
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body.room-scroll-lock {
+  position: fixed;
+  inset: 0;
+}
+
 body {
   background:
     radial-gradient(circle at 70% 8%, rgba(201, 242, 95, 0.14), transparent 34%),
@@ -762,10 +777,16 @@ input::placeholder {
   .room-shell {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    height: 100svh;
+    height: 100dvh;
+    max-height: 100dvh;
     min-height: 0;
     overflow: hidden;
     padding: 8px;
+  }
+
+  .room-shell.chat-focused {
+    height: 100dvh;
+    max-height: 100dvh;
   }
 
   .room-header {
@@ -932,11 +953,54 @@ input::placeholder {
 
   .chat-form input {
     min-height: 38px;
-    font-size: 13px;
+    font-size: 16px;
+    line-height: 1;
   }
 
   .chat-form button {
     min-height: 38px;
+  }
+
+  .room-shell.chat-focused .room-header {
+    min-height: 32px;
+    margin-bottom: 5px;
+  }
+
+  .room-shell.chat-focused .watch-layout {
+    gap: 5px;
+  }
+
+  .room-shell.chat-focused .below-player {
+    padding-top: 5px;
+  }
+
+  .room-shell.chat-focused .below-player h1 {
+    font-size: 22px;
+  }
+
+  .room-shell.chat-focused .room-kicker {
+    margin-bottom: 3px;
+  }
+
+  .room-shell.chat-focused .mode-pill {
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+
+  .room-shell.chat-focused .mobile-tabs button {
+    min-height: 30px;
+  }
+
+  .room-shell.chat-focused .sidebar-section {
+    padding: 7px;
+  }
+
+  .room-shell.chat-focused .emoji-row button {
+    min-height: 28px;
+  }
+
+  .room-shell.chat-focused .chat-form {
+    margin-top: 5px;
   }
 
   .participant-list {
@@ -1028,5 +1092,9 @@ input::placeholder {
   .chat-form input,
   .chat-form button {
     min-height: 36px;
+  }
+
+  .chat-form input {
+    font-size: 16px;
   }
 }

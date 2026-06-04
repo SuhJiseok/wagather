@@ -320,6 +320,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [slowPrompt, setSlowPrompt] = useState<SlowPrompt | null>(null);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
+  const [chatFocused, setChatFocused] = useState(false);
   const [mobileTab, setMobileTab] = useState<"chat" | "people">("chat");
 
   const socketRef = useRef<Socket | null>(null);
@@ -339,6 +340,26 @@ function RoomPage({ roomId }: { roomId: string }) {
   const self = room?.participants.find((participant) => participant.id === selfId) || null;
   const canControl = Boolean(self?.canControl && localMode !== "freeplay");
   const inviteUrl = isStaticPreview ? window.location.href : `${window.location.origin}/room/${roomId}`;
+
+  useEffect(() => {
+    const previousScrollY = window.scrollY;
+    document.body.classList.add("room-scroll-lock");
+    document.documentElement.classList.add("room-scroll-lock");
+    window.scrollTo(0, 0);
+
+    const keepRoomPinned = () => {
+      if (window.scrollY !== 0) window.scrollTo(0, 0);
+    };
+
+    window.addEventListener("scroll", keepRoomPinned, { passive: true });
+
+    return () => {
+      window.removeEventListener("scroll", keepRoomPinned);
+      document.body.classList.remove("room-scroll-lock");
+      document.documentElement.classList.remove("room-scroll-lock");
+      window.scrollTo(0, previousScrollY);
+    };
+  }, []);
 
   useEffect(() => {
     roomRef.current = room;
@@ -750,6 +771,20 @@ function RoomPage({ roomId }: { roomId: string }) {
     socketRef.current?.emit("grant-control", { roomId, participantId: selfId, targetId });
   }
 
+  function keepVideoInView() {
+    setChatFocused(true);
+    window.requestAnimationFrame(() => window.scrollTo(0, 0));
+    window.setTimeout(() => window.scrollTo(0, 0), 80);
+    window.setTimeout(() => window.scrollTo(0, 0), 220);
+  }
+
+  function releaseChatFocus() {
+    window.setTimeout(() => {
+      setChatFocused(false);
+      window.scrollTo(0, 0);
+    }, 120);
+  }
+
   async function copyInvite() {
     await navigator.clipboard.writeText(inviteUrl);
     setCopied(true);
@@ -793,7 +828,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   }
 
   return (
-    <main className="room-shell">
+    <main className={`room-shell ${chatFocused ? "chat-focused" : ""}`}>
       <header className="room-header">
         <div className="brand-mark compact">
           <Clapperboard size={22} />
@@ -908,8 +943,12 @@ function RoomPage({ roomId }: { roomId: string }) {
               <input
                 value={messageText}
                 onChange={(event) => setMessageText(event.target.value)}
+                onPointerDown={keepVideoInView}
+                onFocus={keepVideoInView}
+                onBlur={releaseChatFocus}
                 placeholder="지금 장면에 반응하기"
                 maxLength={240}
+                enterKeyHint="send"
               />
               <button type="submit" aria-label="메시지 보내기">
                 <Send size={18} />
