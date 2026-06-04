@@ -9,3 +9,5 @@ watchme-room-*.png
 Thumbs.db
 .env
 .env.*
+
+.vercel
