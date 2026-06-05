@@ -67,6 +67,7 @@ function serializeRoom(room) {
     hostId: room.hostId,
     controlId: room.controlId,
     playback,
+    hasShownInitialCountdown: room.hasShownInitialCountdown,
     participants,
     messages: room.messages.slice(-60)
   };
@@ -128,6 +129,7 @@ app.post("/api/rooms", (req, res) => {
       time: 0,
       updatedAt: Date.now()
     },
+    hasShownInitialCountdown: false,
     countdownTimer: null,
     participants: new Map(),
     messages: []
@@ -193,7 +195,20 @@ io.on("connection", (socket) => {
     if (action === "play") {
       clearCountdown(room);
       const now = Date.now();
+      if (room.hasShownInitialCountdown) {
+        room.playback = { state: "playing", time: nextTime, updatedAt: now };
+        room.lastActivity = now;
+        io.to(roomId).emit("remote-command", {
+          sourceId: "system",
+          action: "play",
+          playback: normalizedPlayback(room)
+        });
+        emitRoom(room);
+        return;
+      }
+
       const playAt = now + 3000;
+      room.hasShownInitialCountdown = true;
       room.playback = { state: "paused", time: nextTime, updatedAt: now };
       io.to(roomId).emit("play-countdown", {
         sourceId: id,
@@ -243,6 +258,45 @@ io.on("connection", (socket) => {
 
     room.controlId = String(targetId);
     room.lastActivity = Date.now();
+    emitRoom(room);
+  });
+
+  socket.on("change-video", ({ roomId, participantId, youtubeUrl }) => {
+    const room = getRoomOrError(roomId, socket);
+    if (!room) return;
+
+    const id = String(participantId);
+    const participant = room.participants.get(id);
+    const canChangeVideo = participant && (room.hostId === id || room.controlId === id);
+    const videoId = extractYouTubeId(String(youtubeUrl || ""));
+
+    if (!canChangeVideo) {
+      socket.emit("room-error", "영상 변경 권한이 없습니다.");
+      return;
+    }
+
+    if (!videoId) {
+      socket.emit("room-error", "유튜브 링크를 확인해 주세요.");
+      return;
+    }
+
+    clearCountdown(room);
+    io.to(roomId).emit("countdown-cancelled");
+
+    const now = Date.now();
+    room.videoId = videoId;
+    room.playback = { state: "paused", time: 0, updatedAt: now };
+    room.hasShownInitialCountdown = false;
+    room.lastActivity = now;
+
+    for (const viewer of room.participants.values()) {
+      viewer.currentTime = 0;
+      viewer.playerState = "paused";
+      viewer.localMode = "synced";
+      viewer.updatedAt = now;
+    }
+
+    io.to(roomId).emit("system-message", `${participant.nickname}님이 영상을 변경했어요.`);
     emitRoom(room);
   });
 

@@ -374,12 +374,16 @@ input::placeholder {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
   gap: 18px;
-  min-height: calc(100vh - 94px);
+  height: calc(100dvh - 94px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .watch-main {
   display: grid;
-  grid-template-rows: minmax(320px, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  min-height: 0;
   min-width: 0;
 }
 
@@ -396,7 +400,7 @@ input::placeholder {
 .youtube-player iframe {
   width: 100%;
   height: 100%;
-  min-height: 320px;
+  min-height: 420px;
 }
 
 .player-loading {
@@ -416,20 +420,67 @@ input::placeholder {
 
 .below-player {
   display: flex;
-  align-items: end;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 18px 2px 4px;
+  padding: 10px 2px 0;
 }
 
 .below-player h1 {
   margin: 0;
-  font-size: clamp(32px, 4vw, 54px);
+  font-size: clamp(26px, 3vw, 38px);
   line-height: 1;
 }
 
+.video-change-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 0;
+}
+
+.video-change-input {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 0 12px;
+  background: rgba(244, 240, 232, 0.08);
+  border: 1px solid var(--line);
+}
+
+.video-change-input input {
+  min-height: 36px;
+}
+
+.video-change-form button {
+  min-height: 38px;
+  padding: 0 14px;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 0;
+  font-weight: 900;
+}
+
+.video-change-form button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.video-change-form p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .mode-pill {
+  display: inline-flex;
+  align-items: center;
   flex: 0 0 auto;
+  gap: 10px;
   padding: 10px 13px;
   color: #e9f2ce;
   background: rgba(244, 240, 232, 0.08);
@@ -452,17 +503,69 @@ input::placeholder {
   background: #9de7bd;
 }
 
-.watch-sidebar {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
-  gap: 12px;
-  min-height: 0;
+.mode-people,
+.people-avatars {
+  display: flex;
+  align-items: center;
 }
 
-.pause-prompt,
-.sidebar-section {
-  background: rgba(23, 26, 21, 0.9);
+.mode-people {
+  gap: 6px;
+  padding-right: 10px;
+  border-right: 1px solid rgba(244, 240, 232, 0.18);
+}
+
+.people-avatars {
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+}
+
+.avatar.compact {
+  width: 24px;
+  height: 24px;
+  margin-left: -6px;
+  border: 2px solid #171a15;
+  font-size: 11px;
+}
+
+.avatar.compact:first-child {
+  margin-left: 0;
+}
+
+.avatar.compact.host {
+  background: var(--warning);
+}
+
+.avatar.compact.controller {
+  box-shadow: 0 0 0 2px rgba(201, 242, 95, 0.38);
+}
+
+.avatar.compact.muted {
+  color: var(--text);
+  background: rgba(244, 240, 232, 0.14);
+}
+
+.people-inline-count {
+  color: rgba(244, 240, 232, 0.78);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.watch-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: rgba(12, 14, 11, 0.72);
   border: 1px solid var(--line);
+}
+
+.pause-prompt {
+  flex: 0 0 auto;
+  background: rgba(23, 26, 21, 0.96);
+  border-bottom: 1px solid var(--line);
 }
 
 .pause-prompt {
@@ -503,8 +606,7 @@ input::placeholder {
 .prompt-actions button,
 .participant button,
 .emoji-row button,
-.chat-form button,
-.mobile-tabs button {
+.chat-form button {
   min-height: 40px;
   color: var(--text);
   background: rgba(244, 240, 232, 0.08);
@@ -523,34 +625,30 @@ input::placeholder {
 .prompt-actions button:hover,
 .participant button:hover,
 .emoji-row button:hover,
-.chat-form button:hover,
-.mobile-tabs button:hover {
+.chat-form button:hover {
   transform: translateY(-1px);
 }
 
-.mobile-tabs {
-  display: none;
-}
-
 .sidebar-section {
-  display: grid;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   min-height: 0;
-  padding: 14px;
+  overflow: hidden;
 }
 
 .chat-section {
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
-}
-
-.people-section {
-  grid-template-rows: auto minmax(0, auto);
+  min-height: 0;
 }
 
 .section-title {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 9px;
-  margin-bottom: 12px;
+  min-height: 46px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
 }
 
 .section-title h2 {
@@ -560,34 +658,53 @@ input::placeholder {
 
 .message-list {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
-  gap: 9px;
+  gap: 2px;
+  height: 0;
   min-height: 0;
   overflow-y: auto;
-  padding-right: 4px;
+  padding: 10px 8px;
+  overscroll-behavior: contain;
+}
+
+.message-list::before {
+  content: "";
+  flex: 1 0 auto;
+}
+
+.message-list:has(.empty-state)::before {
+  display: none;
 }
 
 .empty-state {
-  margin: 0;
+  margin: auto;
   color: var(--muted);
+  font-size: 13px;
 }
 
 .message {
-  padding: 10px 0;
-  border-bottom: 1px solid rgba(244, 240, 232, 0.08);
+  padding: 5px 7px;
+  border-radius: 6px;
+  line-height: 1.35;
+}
+
+.message:hover {
+  background: rgba(244, 240, 232, 0.06);
 }
 
 .message.emoji p {
-  font-size: 24px;
+  font-size: 22px;
 }
 
 .message-meta {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 6px;
+  margin-right: 6px;
   color: var(--muted);
   font-size: 12px;
+  vertical-align: baseline;
 }
 
 .message-meta strong {
@@ -595,29 +712,55 @@ input::placeholder {
 }
 
 .message p {
-  margin: 6px 0 0;
-  line-height: 1.45;
+  display: inline;
+  margin: 0;
+  font-size: 14px;
+  line-height: inherit;
   overflow-wrap: anywhere;
 }
 
 .emoji-row {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  display: flex;
   gap: 6px;
-  margin-top: 10px;
+  overflow-x: auto;
+  padding-bottom: 1px;
+  scrollbar-width: none;
+}
+
+.emoji-row::-webkit-scrollbar {
+  display: none;
+}
+
+.emoji-row button {
+  flex: 0 0 auto;
+  min-width: 36px;
+  min-height: 30px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 14px;
+}
+
+.chat-composer {
+  display: grid;
+  flex: 0 0 auto;
+  align-self: end;
+  width: 100%;
+  gap: 7px;
+  padding: 10px;
+  background: rgba(17, 19, 15, 0.96);
+  border-top: 1px solid var(--line);
 }
 
 .chat-form {
   display: grid;
   grid-template-columns: 1fr 44px;
   gap: 8px;
-  margin-top: 10px;
 }
 
 .chat-form input {
-  min-height: 44px;
+  min-height: 42px;
   padding: 0 12px;
-  background: rgba(244, 240, 232, 0.08);
+  background: rgba(244, 240, 232, 0.1);
   border: 1px solid var(--line);
 }
 
@@ -733,38 +876,7 @@ input::placeholder {
     grid-template-columns: 1fr;
   }
 
-  .watch-main {
-    grid-template-rows: minmax(260px, 52vw) auto;
-  }
-
   .watch-sidebar {
-    grid-template-rows: auto auto;
-  }
-
-  .mobile-tabs {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-  }
-
-  .mobile-tabs button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-  }
-
-  .mobile-tabs .active {
-    color: var(--accent-ink);
-    background: var(--accent);
-  }
-
-  .sidebar-section {
-    display: none;
-  }
-
-  .sidebar-section.mobile-active {
-    display: grid;
     min-height: 360px;
   }
 
@@ -820,7 +932,7 @@ input::placeholder {
   }
 
   .watch-main {
-    grid-template-rows: auto auto;
+    grid-template-rows: auto auto auto;
     min-height: 0;
   }
 
@@ -850,6 +962,29 @@ input::placeholder {
     font-size: 28px;
   }
 
+  .video-change-form {
+    grid-template-columns: minmax(0, 1fr) 58px;
+    gap: 6px;
+    padding-top: 6px;
+  }
+
+  .video-change-input {
+    padding: 0 10px;
+  }
+
+  .video-change-input input,
+  .video-change-form button {
+    min-height: 36px;
+    font-size: 13px;
+  }
+
+  .avatar.compact {
+    width: 22px;
+    height: 22px;
+    margin-left: -5px;
+    font-size: 11px;
+  }
+
   .room-kicker {
     margin-bottom: 5px;
     font-size: 10px;
@@ -857,18 +992,28 @@ input::placeholder {
 
   .mode-pill {
     padding: 8px 10px;
-    font-size: 13px;
+    gap: 7px;
+    font-size: 12px;
+  }
+
+  .mode-people {
+    gap: 4px;
+    padding-right: 7px;
+  }
+
+  .people-inline-count {
+    font-size: 11px;
   }
 
   .watch-sidebar {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
     gap: 6px;
     min-height: 0;
   }
 
   .watch-sidebar:has(.pause-prompt) {
-    grid-template-rows: auto auto minmax(0, 1fr);
+    min-height: 0;
   }
 
   .pause-prompt {
@@ -893,11 +1038,6 @@ input::placeholder {
     grid-template-columns: 1fr 1fr;
   }
 
-  .mobile-tabs {
-    gap: 6px;
-  }
-
-  .mobile-tabs button,
   .prompt-actions button {
     min-height: 34px;
     font-size: 13px;
@@ -905,11 +1045,6 @@ input::placeholder {
 
   .sidebar-section {
     padding: 10px;
-  }
-
-  .sidebar-section.mobile-active {
-    min-height: 0;
-    height: 100%;
   }
 
   .section-title {
@@ -936,7 +1071,6 @@ input::placeholder {
   .emoji-row {
     grid-template-columns: repeat(6, 1fr);
     gap: 4px;
-    margin-top: 6px;
   }
 
   .emoji-row button {
@@ -948,7 +1082,6 @@ input::placeholder {
   .chat-form {
     grid-template-columns: 1fr 38px;
     gap: 6px;
-    margin-top: 6px;
   }
 
   .chat-form input {
@@ -974,6 +1107,10 @@ input::placeholder {
     padding-top: 5px;
   }
 
+  .room-shell.chat-focused .video-change-form {
+    display: none;
+  }
+
   .room-shell.chat-focused .below-player h1 {
     font-size: 22px;
   }
@@ -985,10 +1122,6 @@ input::placeholder {
   .room-shell.chat-focused .mode-pill {
     padding: 6px 8px;
     font-size: 12px;
-  }
-
-  .room-shell.chat-focused .mobile-tabs button {
-    min-height: 30px;
   }
 
   .room-shell.chat-focused .sidebar-section {
@@ -1060,13 +1193,18 @@ input::placeholder {
     font-size: 24px;
   }
 
+  .video-change-form {
+    padding-top: 4px;
+  }
+
+  .video-change-input input,
+  .video-change-form button {
+    min-height: 32px;
+  }
+
   .mode-pill {
     padding: 7px 9px;
     font-size: 12px;
-  }
-
-  .mobile-tabs button {
-    min-height: 32px;
   }
 
   .sidebar-section {
@@ -1075,14 +1213,6 @@ input::placeholder {
 
   .section-title {
     display: none;
-  }
-
-  .chat-section {
-    grid-template-rows: minmax(0, 1fr) auto auto;
-  }
-
-  .people-section {
-    grid-template-rows: minmax(0, 1fr);
   }
 
   .emoji-row button {

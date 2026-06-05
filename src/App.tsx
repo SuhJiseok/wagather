@@ -4,14 +4,11 @@ import {
   CirclePause,
   Clapperboard,
   Copy,
-  Crown,
-  Hand,
   Link as LinkIcon,
   MessageCircle,
   Play,
   Send,
   ShieldCheck,
-  SmilePlus,
   UserRound,
   UsersRound
 } from "lucide-react";
@@ -51,6 +48,7 @@ type RoomState = {
     time: number;
     updatedAt: number;
   };
+  hasShownInitialCountdown: boolean;
   participants: Participant[];
   messages: ChatMessage[];
 };
@@ -76,6 +74,7 @@ const STORAGE_NICKNAME = "watchme:nickname";
 const STORAGE_PARTICIPANT = "watchme:participant";
 const STATIC_ROOM_PREFIX = "watchme:static-room:";
 const DRIFT_THRESHOLD = 3;
+const SEEK_COMMAND_THRESHOLD = 1.5;
 
 function getParticipantId() {
   const existing = localStorage.getItem(STORAGE_PARTICIPANT);
@@ -149,6 +148,7 @@ function makeStaticRoomState(roomId: string, videoId: string, participantId: str
       time: 0,
       updatedAt: Date.now()
     },
+    hasShownInitialCountdown: false,
     participants: [
       {
         id: participantId,
@@ -321,10 +321,12 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [countdown, setCountdown] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [chatFocused, setChatFocused] = useState(false);
-  const [mobileTab, setMobileTab] = useState<"chat" | "people">("chat");
+  const [nextVideoUrl, setNextVideoUrl] = useState("");
+  const [videoUrlError, setVideoUrlError] = useState("");
 
   const socketRef = useRef<Socket | null>(null);
   const playerRef = useRef<YouTubePlayer | null>(null);
+  const messageListRef = useRef<HTMLDivElement | null>(null);
   const participantIdRef = useRef(getParticipantId());
   const applyingRemoteRef = useRef(false);
   const suppressCommandRef = useRef(false);
@@ -334,11 +336,18 @@ function RoomPage({ roomId }: { roomId: string }) {
   const countdownActiveRef = useRef(false);
   const countdownIntervalRef = useRef<number | null>(null);
   const countdownTimeoutRef = useRef<number | null>(null);
+  const initialPlayGuardRef = useRef(false);
+  const initialPlayGuardTimeoutRef = useRef<number | null>(null);
+  const staticHasShownInitialCountdownRef = useRef(false);
+  const initialCountdownRequestedRef = useRef(false);
+  const lastKnownPlayerTimeRef = useRef(0);
+  const currentVideoIdRef = useRef<string | null>(null);
   const lastBlockedNoticeRef = useRef(0);
 
   const selfId = participantIdRef.current;
   const self = room?.participants.find((participant) => participant.id === selfId) || null;
   const canControl = Boolean(self?.canControl && localMode !== "freeplay");
+  const canChangeVideo = Boolean((self?.isHost || self?.canControl) && localMode !== "freeplay");
   const inviteUrl = isStaticPreview ? window.location.href : `${window.location.origin}/room/${roomId}`;
 
   useEffect(() => {
@@ -363,11 +372,44 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   useEffect(() => {
     roomRef.current = room;
+    if (room?.hasShownInitialCountdown) {
+      initialCountdownRequestedRef.current = true;
+    }
   }, [room]);
+
+  useEffect(() => {
+    staticHasShownInitialCountdownRef.current = false;
+    initialCountdownRequestedRef.current = false;
+    lastKnownPlayerTimeRef.current = 0;
+    currentVideoIdRef.current = null;
+  }, [roomId]);
+
+  useEffect(() => {
+    if (!room?.videoId) return;
+
+    const previousVideoId = currentVideoIdRef.current;
+    currentVideoIdRef.current = room.videoId;
+
+    if (!previousVideoId || previousVideoId === room.videoId) return;
+
+    clearCountdown();
+    setSlowPrompt(null);
+    setLocalMode("synced");
+    localModeRef.current = "synced";
+    staticHasShownInitialCountdownRef.current = false;
+    initialCountdownRequestedRef.current = Boolean(room.hasShownInitialCountdown);
+    lastKnownPlayerTimeRef.current = 0;
+  }, [room?.hasShownInitialCountdown, room?.videoId]);
 
   useEffect(() => {
     localModeRef.current = localMode;
   }, [localMode]);
+
+  useEffect(() => {
+    const messageList = messageListRef.current;
+    if (!messageList) return;
+    messageList.scrollTop = messageList.scrollHeight;
+  }, [messages.length]);
 
   useEffect(() => {
     if (!joined || !nickname) return;
@@ -431,6 +473,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     loadYouTubeApi().then(() => {
       if (cancelled || !window.YT?.Player) return;
       if (typeof playerRef.current?.destroy === "function") playerRef.current.destroy();
+      initialPlayGuardRef.current = true;
       playerRef.current = new window.YT.Player("youtube-player", {
         videoId: room.videoId,
         playerVars: {
@@ -447,8 +490,18 @@ function RoomPage({ roomId }: { roomId: string }) {
             const playback = roomRef.current?.playback;
             const player = playerRef.current;
             if (playback && hasPlayerApi(player)) {
-              player.seekTo(playback.time, true);
-              if (playback.state === "playing") player.playVideo();
+              applyingRemoteRef.current = true;
+              if (playback.time > 0.3) player.seekTo(playback.time, true);
+              if (playback.state === "playing") {
+                initialPlayGuardRef.current = false;
+                player.playVideo();
+              } else {
+                player.pauseVideo();
+                releaseInitialPlayGuard(1200);
+              }
+              window.setTimeout(() => {
+                applyingRemoteRef.current = false;
+              }, 400);
             }
           },
           onStateChange: (event: unknown) => {
@@ -461,6 +514,7 @@ function RoomPage({ roomId }: { roomId: string }) {
 
     return () => {
       cancelled = true;
+      clearInitialPlayGuard();
       if (typeof playerRef.current?.destroy === "function") playerRef.current.destroy();
       playerRef.current = null;
       setPlayerReady(false);
@@ -475,6 +529,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       const stateCode = hasPlayerApi(player) ? player.getPlayerState() : undefined;
       const playerState = stateCode === window.YT?.PlayerState.PLAYING ? "playing" : "paused";
       setLocalTime(currentTime);
+      lastKnownPlayerTimeRef.current = currentTime;
       enforceRoomPlayback();
       socketRef.current?.emit("heartbeat", {
         roomId,
@@ -545,6 +600,21 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   function handlePlayerStateChange(data: number | undefined) {
     if (!window.YT || data === undefined) return;
+    if (initialPlayGuardRef.current) {
+      if (data === window.YT.PlayerState.PLAYING) {
+        const player = playerRef.current;
+        suppressCommandRef.current = true;
+        player?.pauseVideo();
+        window.setTimeout(() => {
+          suppressCommandRef.current = false;
+        }, 300);
+        releaseInitialPlayGuard(900);
+        return;
+      }
+      if (data === window.YT.PlayerState.PAUSED || data === window.YT.PlayerState.CUED) {
+        releaseInitialPlayGuard(500);
+      }
+    }
     if (applyingRemoteRef.current || suppressCommandRef.current) return;
     if (!canControl) {
       if (!isStaticPreview && localModeRef.current === "synced") {
@@ -557,12 +627,27 @@ function RoomPage({ roomId }: { roomId: string }) {
     const player = playerRef.current;
     const time = hasPlayerApi(player) ? player.getCurrentTime() : 0;
     if (data === window.YT.PlayerState.PLAYING) {
+      if (isSeekLikePlaybackStart(time)) {
+        handleSeekCommand(time);
+        lastKnownPlayerTimeRef.current = time;
+        return;
+      }
+
+      if (hasInitialCountdownBeenShown()) {
+        if (!isStaticPreview) {
+          socketRef.current?.emit("playback-command", { roomId, participantId: selfId, action: "play", time });
+        }
+        lastKnownPlayerTimeRef.current = time;
+        return;
+      }
+
       suppressCommandRef.current = true;
       player?.pauseVideo();
       window.setTimeout(() => {
         suppressCommandRef.current = false;
       }, 300);
       if (isStaticPreview) {
+        staticHasShownInitialCountdownRef.current = true;
         startCountdown({
           sourceId: selfId,
           playback: { state: "paused", time, updatedAt: Date.now() },
@@ -570,11 +655,59 @@ function RoomPage({ roomId }: { roomId: string }) {
         }, true);
         return;
       }
+      initialCountdownRequestedRef.current = true;
       socketRef.current?.emit("playback-command", { roomId, participantId: selfId, action: "play", time });
     }
     if (data === window.YT.PlayerState.PAUSED) {
       socketRef.current?.emit("playback-command", { roomId, participantId: selfId, action: "pause", time });
     }
+  }
+
+  function hasInitialCountdownBeenShown() {
+    if (isStaticPreview) return staticHasShownInitialCountdownRef.current;
+    return initialCountdownRequestedRef.current || Boolean(roomRef.current?.hasShownInitialCountdown);
+  }
+
+  function isSeekLikePlaybackStart(time: number) {
+    const playback = roomRef.current?.playback;
+    const roomTime = playback ? getPlaybackTime(playback) : lastKnownPlayerTimeRef.current;
+    return (
+      Math.abs(time - roomTime) > SEEK_COMMAND_THRESHOLD &&
+      Math.abs(time - lastKnownPlayerTimeRef.current) > SEEK_COMMAND_THRESHOLD
+    );
+  }
+
+  function handleSeekCommand(time: number) {
+    const playbackState = roomRef.current?.playback.state || "paused";
+    if (!isStaticPreview) {
+      socketRef.current?.emit("playback-command", { roomId, participantId: selfId, action: "seek", time });
+    }
+
+    if (playbackState === "paused" && hasPlayerApi(playerRef.current)) {
+      suppressCommandRef.current = true;
+      playerRef.current.pauseVideo();
+      window.setTimeout(() => {
+        suppressCommandRef.current = false;
+      }, 300);
+    }
+  }
+
+  function clearInitialPlayGuard() {
+    if (initialPlayGuardTimeoutRef.current) {
+      window.clearTimeout(initialPlayGuardTimeoutRef.current);
+      initialPlayGuardTimeoutRef.current = null;
+    }
+    initialPlayGuardRef.current = false;
+  }
+
+  function releaseInitialPlayGuard(delay: number) {
+    if (initialPlayGuardTimeoutRef.current) {
+      window.clearTimeout(initialPlayGuardTimeoutRef.current);
+    }
+    initialPlayGuardTimeoutRef.current = window.setTimeout(() => {
+      initialPlayGuardRef.current = false;
+      initialPlayGuardTimeoutRef.current = null;
+    }, delay);
   }
 
   function applyRemoteCommand(command: RemoteCommand) {
@@ -606,7 +739,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     setCountdown(null);
   }
 
-  function startCountdown(command: CountdownCommand, playLocally = false) {
+  function startCountdown(command: CountdownCommand, playLocally = false, onComplete?: () => void) {
     clearCountdown();
     countdownActiveRef.current = true;
     const player = playerRef.current;
@@ -628,6 +761,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     countdownIntervalRef.current = window.setInterval(updateCount, 150);
     countdownTimeoutRef.current = window.setTimeout(() => {
       clearCountdown();
+      onComplete?.();
       if (playLocally && hasPlayerApi(playerRef.current)) {
         applyingRemoteRef.current = true;
         playerRef.current.playVideo();
@@ -766,9 +900,51 @@ function RoomPage({ roomId }: { roomId: string }) {
     });
   }
 
-  function grantControl(targetId: string) {
-    if (isStaticPreview) return;
-    socketRef.current?.emit("grant-control", { roomId, participantId: selfId, targetId });
+  function changeVideo(event: React.FormEvent) {
+    event.preventDefault();
+    const videoId = extractYouTubeId(nextVideoUrl);
+
+    if (!videoId) {
+      setVideoUrlError("유튜브 링크를 확인해 주세요.");
+      return;
+    }
+
+    setVideoUrlError("");
+    clearCountdown();
+    setSlowPrompt(null);
+    updateLocalMode("synced");
+
+    if (isStaticPreview) {
+      const now = Date.now();
+      staticHasShownInitialCountdownRef.current = false;
+      initialCountdownRequestedRef.current = false;
+      lastKnownPlayerTimeRef.current = 0;
+      localStorage.setItem(`${STATIC_ROOM_PREFIX}${roomId}`, JSON.stringify({ videoId, updatedAt: now }));
+      setRoom((currentRoom) => {
+        if (!currentRoom) return currentRoom;
+        return {
+          ...currentRoom,
+          videoId,
+          playback: { state: "paused", time: 0, updatedAt: now },
+          hasShownInitialCountdown: false,
+          participants: currentRoom.participants.map((participant) => ({
+            ...participant,
+            currentTime: 0,
+            drift: 0,
+            localMode: "synced",
+            playerState: "paused",
+            updatedAt: now
+          }))
+        };
+      });
+      setSystemNote("영상이 변경됐어요.");
+      window.setTimeout(() => setSystemNote(""), 2200);
+      setNextVideoUrl("");
+      return;
+    }
+
+    socketRef.current?.emit("change-video", { roomId, participantId: selfId, youtubeUrl: nextVideoUrl });
+    setNextVideoUrl("");
   }
 
   function keepVideoInView() {
@@ -798,6 +974,8 @@ function RoomPage({ roomId }: { roomId: string }) {
       return a.nickname.localeCompare(b.nickname, "ko");
     });
   }, [room?.participants]);
+  const visibleParticipants = sortedParticipants.slice(0, 8);
+  const hiddenParticipantCount = Math.max(0, sortedParticipants.length - visibleParticipants.length);
 
   if (!joined) {
     return (
@@ -875,12 +1053,49 @@ function RoomPage({ roomId }: { roomId: string }) {
               <h1>같이 보기 방</h1>
             </div>
             <div className={`mode-pill ${isStaticPreview ? "preview" : localMode}`}>
+              <span className="mode-people" aria-label={`참여자 ${sortedParticipants.length}명`}>
+                <span className="people-avatars">
+                  {visibleParticipants.slice(0, 5).map((participant) => (
+                    <span
+                      className={`avatar compact ${participant.isHost ? "host" : ""} ${
+                        participant.canControl ? "controller" : ""
+                      }`}
+                      key={participant.id}
+                      title={participant.nickname}
+                    >
+                      {participant.nickname.slice(0, 1)}
+                    </span>
+                  ))}
+                  {hiddenParticipantCount > 0 && <span className="avatar compact muted">+{hiddenParticipantCount}</span>}
+                </span>
+                <span className="people-inline-count">{sortedParticipants.length}명</span>
+              </span>
               {isStaticPreview && "프론트 미리보기"}
               {!isStaticPreview && localMode === "synced" && "같이 보는 중"}
               {!isStaticPreview && localMode === "waiting" && "잠깐 쉬는 중"}
               {!isStaticPreview && localMode === "freeplay" && "먼저 보는 중"}
             </div>
           </div>
+          {canChangeVideo && (
+            <form className="video-change-form" onSubmit={changeVideo}>
+              <div className="video-change-input">
+                <LinkIcon size={17} />
+                <input
+                  value={nextVideoUrl}
+                  onChange={(event) => {
+                    setNextVideoUrl(event.target.value);
+                    if (videoUrlError) setVideoUrlError("");
+                  }}
+                  placeholder="새 유튜브 링크"
+                  aria-label="새 유튜브 링크"
+                />
+              </div>
+              <button type="submit" disabled={!nextVideoUrl.trim()}>
+                변경
+              </button>
+              {videoUrlError && <p>{videoUrlError}</p>}
+            </form>
+          )}
         </div>
 
         <aside className="watch-sidebar">
@@ -902,23 +1117,12 @@ function RoomPage({ roomId }: { roomId: string }) {
             </section>
           )}
 
-          <div className="mobile-tabs">
-            <button className={mobileTab === "chat" ? "active" : ""} onClick={() => setMobileTab("chat")}>
-              <MessageCircle size={16} />
-              채팅
-            </button>
-            <button className={mobileTab === "people" ? "active" : ""} onClick={() => setMobileTab("people")}>
-              <UsersRound size={16} />
-              참여자
-            </button>
-          </div>
-
-          <section className={`sidebar-section chat-section ${mobileTab === "chat" ? "mobile-active" : ""}`}>
+          <section className="sidebar-section chat-section">
             <div className="section-title">
               <MessageCircle size={18} />
-              <h2>채팅</h2>
+              <h2>실시간 채팅</h2>
             </div>
-            <div className="message-list">
+            <div className="message-list" ref={messageListRef}>
               {messages.length === 0 && (
                 <p className="empty-state">첫 반응을 남겨보세요.</p>
               )}
@@ -932,66 +1136,33 @@ function RoomPage({ roomId }: { roomId: string }) {
                 </article>
               ))}
             </div>
-            <div className="emoji-row" aria-label="빠른 반응">
-              {["ㅋㅋ", "헉", "👏", "❤️", "😮", "🔥"].map((emoji) => (
-                <button key={emoji} onClick={() => sendEmoji(emoji)}>
-                  {emoji}
+            <div className="chat-composer">
+              <div className="emoji-row" aria-label="빠른 반응">
+                {["ㅋㅋ", "헉", "👏", "❤️", "😮", "🔥"].map((emoji) => (
+                  <button key={emoji} onClick={() => sendEmoji(emoji)}>
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+              <form className="chat-form" onSubmit={sendMessage}>
+                <input
+                  value={messageText}
+                  onChange={(event) => setMessageText(event.target.value)}
+                  onPointerDown={keepVideoInView}
+                  onFocus={keepVideoInView}
+                  onBlur={releaseChatFocus}
+                  placeholder="지금 장면에 반응하기"
+                  maxLength={240}
+                  enterKeyHint="send"
+                />
+                <button type="submit" aria-label="메시지 보내기">
+                  <Send size={18} />
                 </button>
-              ))}
-            </div>
-            <form className="chat-form" onSubmit={sendMessage}>
-              <input
-                value={messageText}
-                onChange={(event) => setMessageText(event.target.value)}
-                onPointerDown={keepVideoInView}
-                onFocus={keepVideoInView}
-                onBlur={releaseChatFocus}
-                placeholder="지금 장면에 반응하기"
-                maxLength={240}
-                enterKeyHint="send"
-              />
-              <button type="submit" aria-label="메시지 보내기">
-                <Send size={18} />
-              </button>
-            </form>
-          </section>
-
-          <section className={`sidebar-section people-section ${mobileTab === "people" ? "mobile-active" : ""}`}>
-            <div className="section-title">
-              <UsersRound size={18} />
-              <h2>참여자</h2>
-            </div>
-            <div className="participant-list">
-              {sortedParticipants.map((participant) => (
-                <article className="participant" key={participant.id}>
-                  <div className="participant-main">
-                    <div className="avatar">{participant.nickname.slice(0, 1)}</div>
-                    <div>
-                      <p>
-                        {participant.nickname}
-                        {participant.isHost && <Crown size={14} />}
-                        {participant.canControl && <Hand size={14} />}
-                      </p>
-                      <span>{participantStatus(participant)}</span>
-                    </div>
-                  </div>
-                  {self?.isHost && !participant.canControl && (
-                    <button onClick={() => grantControl(participant.id)}>권한 주기</button>
-                  )}
-                </article>
-              ))}
+              </form>
             </div>
           </section>
         </aside>
       </section>
     </main>
   );
-}
-
-function participantStatus(participant: Participant) {
-  if (participant.localMode === "waiting") return "잠깐 쉬는 중";
-  if (participant.localMode === "freeplay") return "먼저 보는 중";
-  if (Math.abs(participant.drift) < DRIFT_THRESHOLD) return "같이 보는 중";
-  if (participant.drift < 0) return `${participant.nickname}님이 ${Math.abs(Math.floor(participant.drift))}초 뒤쳐져 있어요`;
-  return `${participant.nickname}님이 ${Math.floor(participant.drift)}초 앞서 있어요`;
 }
