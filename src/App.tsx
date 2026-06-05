@@ -9,6 +9,7 @@ import {
   Play,
   Send,
   ShieldCheck,
+  Smile,
   UserRound,
   UsersRound
 } from "lucide-react";
@@ -75,6 +76,27 @@ const STORAGE_PARTICIPANT = "watchme:participant";
 const STATIC_ROOM_PREFIX = "watchme:static-room:";
 const DRIFT_THRESHOLD = 3;
 const SEEK_COMMAND_THRESHOLD = 1.5;
+const ROOM_VISUAL_HEIGHT_VAR = "--room-visual-height";
+const ROOM_KEYBOARD_INSET_VAR = "--room-keyboard-inset";
+
+function syncRoomViewportVars() {
+  if (typeof window === "undefined") return;
+
+  const viewport = window.visualViewport;
+  const height = viewport?.height || window.innerHeight;
+  const offsetTop = viewport?.offsetTop || 0;
+  const keyboardInset = Math.max(0, window.innerHeight - height - offsetTop);
+
+  document.documentElement.style.setProperty(ROOM_VISUAL_HEIGHT_VAR, `${Math.round(height)}px`);
+  document.documentElement.style.setProperty(ROOM_KEYBOARD_INSET_VAR, `${Math.round(keyboardInset)}px`);
+}
+
+function clearRoomViewportVars() {
+  if (typeof document === "undefined") return;
+
+  document.documentElement.style.removeProperty(ROOM_VISUAL_HEIGHT_VAR);
+  document.documentElement.style.removeProperty(ROOM_KEYBOARD_INSET_VAR);
+}
 
 function getParticipantId() {
   const existing = localStorage.getItem(STORAGE_PARTICIPANT);
@@ -364,6 +386,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     const previousScrollY = window.scrollY;
     document.body.classList.add("room-scroll-lock");
     document.documentElement.classList.add("room-scroll-lock");
+    syncRoomViewportVars();
     window.scrollTo(0, 0);
 
     const keepRoomPinned = () => {
@@ -376,7 +399,26 @@ function RoomPage({ roomId }: { roomId: string }) {
       window.removeEventListener("scroll", keepRoomPinned);
       document.body.classList.remove("room-scroll-lock");
       document.documentElement.classList.remove("room-scroll-lock");
+      clearRoomViewportVars();
       window.scrollTo(0, previousScrollY);
+    };
+  }, []);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const scheduleSync = () => window.requestAnimationFrame(syncRoomViewportVars);
+
+    syncRoomViewportVars();
+    window.addEventListener("resize", scheduleSync);
+    window.addEventListener("orientationchange", scheduleSync);
+    viewport?.addEventListener("resize", scheduleSync);
+    viewport?.addEventListener("scroll", scheduleSync);
+
+    return () => {
+      window.removeEventListener("resize", scheduleSync);
+      window.removeEventListener("orientationchange", scheduleSync);
+      viewport?.removeEventListener("resize", scheduleSync);
+      viewport?.removeEventListener("scroll", scheduleSync);
     };
   }, []);
 
@@ -998,14 +1040,23 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   function keepVideoInView() {
     setChatFocused(true);
-    window.requestAnimationFrame(() => window.scrollTo(0, 0));
-    window.setTimeout(() => window.scrollTo(0, 0), 80);
-    window.setTimeout(() => window.scrollTo(0, 0), 220);
+    const pinRoom = () => {
+      syncRoomViewportVars();
+      window.scrollTo(0, 0);
+      if (messageListRef.current) {
+        messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+      }
+    };
+
+    window.requestAnimationFrame(pinRoom);
+    window.setTimeout(pinRoom, 80);
+    window.setTimeout(pinRoom, 240);
   }
 
   function releaseChatFocus() {
     window.setTimeout(() => {
       setChatFocused(false);
+      syncRoomViewportVars();
       window.scrollTo(0, 0);
     }, 120);
   }
@@ -1290,17 +1341,31 @@ function RoomPage({ roomId }: { roomId: string }) {
                 ))}
               </div>
               <form className="chat-form" onSubmit={sendMessage}>
-                <input
-                  value={messageText}
-                  onChange={(event) => setMessageText(event.target.value)}
-                  onPointerDown={keepVideoInView}
-                  onFocus={keepVideoInView}
-                  onBlur={releaseChatFocus}
-                  placeholder="지금 장면에 반응하기"
-                  maxLength={240}
-                  enterKeyHint="send"
-                />
-                <button type="submit" aria-label="메시지 보내기">
+                <span className="composer-avatar" aria-hidden="true">
+                  {nickname ? nickname.slice(0, 1) : <UserRound size={18} />}
+                </span>
+                <div className="chat-input-wrap">
+                  <input
+                    value={messageText}
+                    onChange={(event) => setMessageText(event.target.value)}
+                    onPointerDown={keepVideoInView}
+                    onFocus={keepVideoInView}
+                    onBlur={releaseChatFocus}
+                    placeholder="채팅..."
+                    maxLength={240}
+                    enterKeyHint="send"
+                  />
+                  <button
+                    className="composer-emoji-button"
+                    type="button"
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => setMessageText((current) => `${current}${current && !current.endsWith(" ") ? " " : ""}😊`)}
+                    aria-label="웃는 이모지 추가"
+                  >
+                    <Smile size={20} />
+                  </button>
+                </div>
+                <button className="send-button" type="submit" aria-label="메시지 보내기" disabled={!messageText.trim()}>
                   <Send size={18} />
                 </button>
               </form>

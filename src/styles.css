@@ -18,6 +18,8 @@
   --warning: #ffcf6e;
   --danger: #ff806e;
   --shadow: 0 20px 80px rgba(0, 0, 0, 0.36);
+  --room-visual-height: 100dvh;
+  --room-keyboard-inset: 0px;
 }
 
 * {
@@ -795,6 +797,15 @@ input::placeholder {
   gap: 8px;
 }
 
+.chat-input-wrap {
+  display: contents;
+}
+
+.composer-avatar,
+.composer-emoji-button {
+  display: none;
+}
+
 .chat-form input {
   min-height: 42px;
   padding: 0 12px;
@@ -807,6 +818,16 @@ input::placeholder {
   place-items: center;
   color: var(--accent-ink);
   background: var(--accent);
+}
+
+.chat-form .composer-emoji-button,
+.chat-form .composer-avatar {
+  display: none;
+}
+
+.chat-form button:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .participant-list {
@@ -1266,11 +1287,18 @@ input::placeholder {
 }
 
 @media (max-width: 760px) {
+  html.room-scroll-lock,
+  body.room-scroll-lock,
+  body.room-scroll-lock #root {
+    height: var(--room-visual-height, 100dvh);
+    min-height: var(--room-visual-height, 100dvh);
+  }
+
   .room-shell,
   .room-shell.chat-focused {
     display: block;
-    height: 100dvh;
-    max-height: 100dvh;
+    height: var(--room-visual-height, 100dvh);
+    max-height: var(--room-visual-height, 100dvh);
     min-height: 0;
     overflow: hidden;
     padding: 0;
@@ -1292,7 +1320,7 @@ input::placeholder {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
     gap: 0;
-    height: 100dvh;
+    height: var(--room-visual-height, 100dvh);
     min-height: 0;
     overflow: hidden;
   }
@@ -1337,6 +1365,17 @@ input::placeholder {
     border-top: 1px solid rgba(244, 240, 232, 0.16);
     border-radius: 24px 24px 0 0;
     box-shadow: 0 -18px 42px rgba(0, 0, 0, 0.42);
+  }
+
+  .room-shell.chat-focused {
+    --mobile-chat-overlap: clamp(56px, 15vw, 86px);
+  }
+
+  .room-shell.chat-focused .watch-sidebar {
+    z-index: 3;
+    height: calc(100% + var(--mobile-chat-overlap));
+    margin-top: calc(var(--mobile-chat-overlap) * -1);
+    border-radius: 22px 22px 0 0;
   }
 
   .chat-section,
@@ -1587,9 +1626,17 @@ input::placeholder {
     margin-top: 0;
   }
 
+  .room-shell.chat-focused .chat-composer {
+    padding: 10px 7px calc(9px + env(safe-area-inset-bottom));
+  }
+
   .emoji-row {
     display: flex;
     gap: 6px;
+  }
+
+  .room-shell.chat-focused .emoji-row {
+    display: none;
   }
 
   .emoji-row button,
@@ -1605,6 +1652,31 @@ input::placeholder {
     gap: 7px;
   }
 
+  .room-shell.chat-focused .chat-form {
+    grid-template-columns: 34px minmax(0, 1fr) 42px;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .room-shell.chat-focused .composer-avatar {
+    display: grid;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    color: rgba(244, 240, 232, 0.88);
+    background: rgba(244, 240, 232, 0.22);
+    border: 1px solid rgba(244, 240, 232, 0.1);
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 900;
+  }
+
+  .room-shell.chat-focused .chat-input-wrap {
+    position: relative;
+    display: block;
+    min-width: 0;
+  }
+
   .chat-form input,
   .chat-form button,
   .room-shell.chat-focused .chat-form input,
@@ -1613,12 +1685,50 @@ input::placeholder {
   }
 
   .chat-form input {
+    width: 100%;
     padding: 0 12px;
     font-size: 16px;
   }
 
+  .room-shell.chat-focused .chat-form input {
+    padding: 0 44px 0 13px;
+    color: var(--text);
+    background: #252625;
+    border-color: rgba(244, 240, 232, 0.08);
+    border-radius: 999px;
+  }
+
+  .room-shell.chat-focused .composer-emoji-button {
+    position: absolute;
+    top: 50%;
+    right: 4px;
+    display: inline-grid;
+    width: 34px;
+    min-height: 34px;
+    padding: 0;
+    place-items: center;
+    color: rgba(244, 240, 232, 0.9);
+    background: transparent;
+    border: 0;
+    transform: translateY(-50%);
+  }
+
   .chat-form button {
     border-radius: 999px;
+  }
+
+  .room-shell.chat-focused .chat-form .send-button {
+    color: rgba(244, 240, 232, 0.72);
+    background: transparent;
+    border: 0;
+  }
+
+  .room-shell.chat-focused .chat-form .send-button:not(:disabled) {
+    color: var(--accent);
+  }
+
+  .room-shell.chat-focused .chat-form .send-button:disabled {
+    opacity: 0.42;
   }
 
   .avatar.compact {
