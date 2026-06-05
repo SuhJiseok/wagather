@@ -323,6 +323,8 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [chatFocused, setChatFocused] = useState(false);
   const [nextVideoUrl, setNextVideoUrl] = useState("");
   const [videoUrlError, setVideoUrlError] = useState("");
+  const [mobileVideoFormOpen, setMobileVideoFormOpen] = useState(false);
+  const [initialPlaybackPending, setInitialPlaybackPending] = useState(false);
 
   const socketRef = useRef<Socket | null>(null);
   const playerRef = useRef<YouTubePlayer | null>(null);
@@ -349,6 +351,14 @@ function RoomPage({ roomId }: { roomId: string }) {
   const canControl = Boolean(self?.canControl && localMode !== "freeplay");
   const canChangeVideo = Boolean((self?.isHost || self?.canControl) && localMode !== "freeplay");
   const inviteUrl = isStaticPreview ? window.location.href : `${window.location.origin}/room/${roomId}`;
+  const shouldShowInitialPlayOverlay = Boolean(
+    canControl &&
+      playerReady &&
+      countdown === null &&
+      !initialPlaybackPending &&
+      room?.playback.state === "paused" &&
+      !hasInitialCountdownBeenShown()
+  );
 
   useEffect(() => {
     const previousScrollY = window.scrollY;
@@ -371,6 +381,12 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, []);
 
   useEffect(() => {
+    if (!canChangeVideo && mobileVideoFormOpen) {
+      setMobileVideoFormOpen(false);
+    }
+  }, [canChangeVideo, mobileVideoFormOpen]);
+
+  useEffect(() => {
     roomRef.current = room;
     if (room?.hasShownInitialCountdown) {
       initialCountdownRequestedRef.current = true;
@@ -382,6 +398,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     initialCountdownRequestedRef.current = false;
     lastKnownPlayerTimeRef.current = 0;
     currentVideoIdRef.current = null;
+    setInitialPlaybackPending(false);
   }, [roomId]);
 
   useEffect(() => {
@@ -399,6 +416,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     staticHasShownInitialCountdownRef.current = false;
     initialCountdownRequestedRef.current = Boolean(room.hasShownInitialCountdown);
     lastKnownPlayerTimeRef.current = 0;
+    setInitialPlaybackPending(false);
   }, [room?.hasShownInitialCountdown, room?.videoId]);
 
   useEffect(() => {
@@ -647,25 +665,54 @@ function RoomPage({ roomId }: { roomId: string }) {
         suppressCommandRef.current = false;
       }, 300);
       if (isStaticPreview) {
-        staticHasShownInitialCountdownRef.current = true;
-        startCountdown({
-          sourceId: selfId,
-          playback: { state: "paused", time, updatedAt: Date.now() },
-          playAt: Date.now() + 3000
-        }, true);
+        requestInitialPlaybackCountdown(time);
         return;
       }
-      initialCountdownRequestedRef.current = true;
-      socketRef.current?.emit("playback-command", { roomId, participantId: selfId, action: "play", time });
+      requestInitialPlaybackCountdown(time);
     }
     if (data === window.YT.PlayerState.PAUSED) {
       socketRef.current?.emit("playback-command", { roomId, participantId: selfId, action: "pause", time });
     }
   }
 
+  function startInitialPlaybackFromOverlay() {
+    if (!canControl || hasInitialCountdownBeenShown()) return;
+    const player = playerRef.current;
+    const playback = roomRef.current?.playback;
+    const time = hasPlayerApi(player) ? player.getCurrentTime() : playback ? getPlaybackTime(playback) : 0;
+
+    if (hasPlayerApi(player)) {
+      suppressCommandRef.current = true;
+      player.pauseVideo();
+      window.setTimeout(() => {
+        suppressCommandRef.current = false;
+      }, 300);
+    }
+
+    requestInitialPlaybackCountdown(time);
+  }
+
+  function requestInitialPlaybackCountdown(time: number) {
+    const safeTime = Math.max(0, Number.isFinite(time) ? time : 0);
+
+    if (isStaticPreview) {
+      staticHasShownInitialCountdownRef.current = true;
+      startCountdown({
+        sourceId: selfId,
+        playback: { state: "paused", time: safeTime, updatedAt: Date.now() },
+        playAt: Date.now() + 3000
+      }, true);
+      return;
+    }
+
+    initialCountdownRequestedRef.current = true;
+    setInitialPlaybackPending(true);
+    socketRef.current?.emit("playback-command", { roomId, participantId: selfId, action: "play", time: safeTime });
+  }
+
   function hasInitialCountdownBeenShown() {
     if (isStaticPreview) return staticHasShownInitialCountdownRef.current;
-    return initialCountdownRequestedRef.current || Boolean(roomRef.current?.hasShownInitialCountdown);
+    return initialCountdownRequestedRef.current || Boolean(room?.hasShownInitialCountdown || roomRef.current?.hasShownInitialCountdown);
   }
 
   function isSeekLikePlaybackStart(time: number) {
@@ -940,11 +987,13 @@ function RoomPage({ roomId }: { roomId: string }) {
       setSystemNote("영상이 변경됐어요.");
       window.setTimeout(() => setSystemNote(""), 2200);
       setNextVideoUrl("");
+      setMobileVideoFormOpen(false);
       return;
     }
 
     socketRef.current?.emit("change-video", { roomId, participantId: selfId, youtubeUrl: nextVideoUrl });
     setNextVideoUrl("");
+    setMobileVideoFormOpen(false);
   }
 
   function keepVideoInView() {
@@ -976,6 +1025,15 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, [room?.participants]);
   const visibleParticipants = sortedParticipants.slice(0, 8);
   const hiddenParticipantCount = Math.max(0, sortedParticipants.length - visibleParticipants.length);
+  const mobileVisibleParticipants = sortedParticipants.slice(0, 4);
+  const mobileHiddenParticipantCount = Math.max(0, sortedParticipants.length - mobileVisibleParticipants.length);
+  const mobileStatusLabel = isStaticPreview
+    ? "미리보기"
+    : localMode === "synced"
+      ? "같이 보는 중"
+      : localMode === "waiting"
+        ? "잠깐 쉬는 중"
+        : "먼저 보는 중";
 
   if (!joined) {
     return (
@@ -1045,6 +1103,14 @@ function RoomPage({ roomId }: { roomId: string }) {
                 <Clapperboard size={28} />
                 영상을 준비하고 있어요
               </div>
+            )}
+            {shouldShowInitialPlayOverlay && (
+              <button className="initial-play-overlay" type="button" onClick={startInitialPlaybackFromOverlay}>
+                <span>
+                  <Play size={22} />
+                  같이 재생 시작
+                </span>
+              </button>
             )}
           </div>
           <div className="below-player">
@@ -1118,6 +1184,85 @@ function RoomPage({ roomId }: { roomId: string }) {
           )}
 
           <section className="sidebar-section chat-section">
+            <div className="mobile-chat-handle" aria-hidden="true" />
+            <div className="mobile-chat-header">
+              <div className="mobile-chat-copy">
+                <div className="mobile-chat-title-row">
+                  <MessageCircle size={17} />
+                  <h2>실시간 채팅</h2>
+                </div>
+                <div className="mobile-chat-subline">
+                  <span className="people-avatars mobile-avatars">
+                    {mobileVisibleParticipants.map((participant) => (
+                      <span
+                        className={`avatar compact ${participant.isHost ? "host" : ""} ${
+                          participant.canControl ? "controller" : ""
+                        }`}
+                        key={participant.id}
+                        title={participant.nickname}
+                      >
+                        {participant.nickname.slice(0, 1)}
+                      </span>
+                    ))}
+                    {mobileHiddenParticipantCount > 0 && (
+                      <span className="avatar compact muted">+{mobileHiddenParticipantCount}</span>
+                    )}
+                  </span>
+                  <span className="people-inline-count">{sortedParticipants.length}명</span>
+                </div>
+              </div>
+              <div className="mobile-chat-actions">
+                <button
+                  className={`mobile-status-pill ${isStaticPreview ? "preview" : localMode}`}
+                  type="button"
+                  onClick={() => {
+                    if (!isStaticPreview && localMode !== "synced") rejoinRoomTime();
+                  }}
+                >
+                  {mobileStatusLabel}
+                </button>
+                {canChangeVideo && (
+                  <button
+                    className={`mobile-icon-button ${mobileVideoFormOpen ? "active" : ""}`}
+                    type="button"
+                    onClick={() => setMobileVideoFormOpen((current) => !current)}
+                    aria-controls="mobile-video-change-panel"
+                    aria-expanded={mobileVideoFormOpen}
+                    aria-label={mobileVideoFormOpen ? "영상 변경 닫기" : "영상 변경 열기"}
+                  >
+                    <LinkIcon size={17} />
+                  </button>
+                )}
+                <button
+                  className="mobile-icon-button"
+                  type="button"
+                  onClick={copyInvite}
+                  aria-label={copied ? "초대 링크 복사됨" : "초대 링크 복사"}
+                >
+                  <Copy size={17} />
+                </button>
+              </div>
+            </div>
+            {canChangeVideo && mobileVideoFormOpen && (
+              <form className="mobile-video-change-panel" id="mobile-video-change-panel" onSubmit={changeVideo}>
+                <div className="video-change-input">
+                  <LinkIcon size={16} />
+                  <input
+                    value={nextVideoUrl}
+                    onChange={(event) => {
+                      setNextVideoUrl(event.target.value);
+                      if (videoUrlError) setVideoUrlError("");
+                    }}
+                    placeholder="새 유튜브 링크"
+                    aria-label="새 유튜브 링크"
+                  />
+                </div>
+                <button type="submit" disabled={!nextVideoUrl.trim()}>
+                  변경
+                </button>
+                {videoUrlError && <p>{videoUrlError}</p>}
+              </form>
+            )}
             <div className="section-title">
               <MessageCircle size={18} />
               <h2>실시간 채팅</h2>
