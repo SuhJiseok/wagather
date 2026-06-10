@@ -952,6 +952,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const lastMouseRef = useRef<{ x: number; y: number } | null>(null);
   const cursorChatRef = useRef<{ x: number; y: number; text: string } | null>(null);
   const cursorEmitAtRef = useRef(0);
+  const cursorIdleTimeoutRef = useRef<number | null>(null);
 
   const selfId = participantIdRef.current;
   const self = room?.participants.find((participant) => participant.id === selfId) || null;
@@ -1103,10 +1104,17 @@ function RoomPage({ roomId }: { roomId: string }) {
         y = clampRatio((mouse.y - rect.top) / rect.height, 0.05, 0.9);
       }
       setCursorChat({ x, y, text: "" });
+      armCursorIdleTimer();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [joined]);
+
+  useEffect(() => {
+    return () => {
+      if (cursorIdleTimeoutRef.current) window.clearTimeout(cursorIdleTimeoutRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!Object.keys(remoteBubbles).length) return;
@@ -1698,20 +1706,28 @@ function RoomPage({ roomId }: { roomId: string }) {
     emitCursorChat(x, y, cursorChatRef.current?.text ?? "");
   }
 
+  function armCursorIdleTimer() {
+    if (cursorIdleTimeoutRef.current) window.clearTimeout(cursorIdleTimeoutRef.current);
+    cursorIdleTimeoutRef.current = window.setTimeout(() => closeCursorChat(), 4000);
+  }
+
   function updateCursorChatText(text: string) {
     const current = cursorChatRef.current;
     if (!current) return;
     setCursorChat({ ...current, text });
     emitCursorChat(current.x, current.y, text, true);
+    armCursorIdleTimer();
   }
 
-  function closeCursorChat(keepRemote: boolean) {
+  function closeCursorChat() {
+    if (cursorIdleTimeoutRef.current) {
+      window.clearTimeout(cursorIdleTimeoutRef.current);
+      cursorIdleTimeoutRef.current = null;
+    }
     const current = cursorChatRef.current;
     setCursorChat(null);
     if (isStaticPreview || !current) return;
-    if (!keepRemote || !current.text.trim()) {
-      socketRef.current?.emit("cursor-chat", { roomId, participantId: selfId, text: "", x: current.x, y: current.y });
-    }
+    socketRef.current?.emit("cursor-chat", { roomId, participantId: selfId, text: "", x: current.x, y: current.y });
   }
 
   function sendPingAt(clientX: number, clientY: number) {
@@ -1981,18 +1997,21 @@ function RoomPage({ roomId }: { roomId: string }) {
                   }
                 >
                   <span className="cursor-bubble-name">{nickname}</span>
-                  <input
-                    autoFocus
-                    value={cursorChat.text}
-                    maxLength={80}
-                    placeholder="메시지 입력..."
-                    onChange={(event) => updateCursorChatText(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") closeCursorChat(true);
-                      if (event.key === "Escape") closeCursorChat(false);
-                    }}
-                    onBlur={() => closeCursorChat(true)}
-                  />
+                  <span className="cursor-input-sizer">
+                    <span aria-hidden="true">{cursorChat.text || "메시지 입력..."}</span>
+                    <input
+                      autoFocus
+                      size={2}
+                      value={cursorChat.text}
+                      maxLength={80}
+                      placeholder="메시지 입력..."
+                      onChange={(event) => updateCursorChatText(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") closeCursorChat();
+                      }}
+                      onBlur={() => closeCursorChat()}
+                    />
+                  </span>
                 </div>
               </div>
             )}

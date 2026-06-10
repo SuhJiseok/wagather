@@ -1073,6 +1073,7 @@ input::placeholder {
   position: absolute;
   inset: 0;
   z-index: 6;
+  cursor: none;
 }
 
 .cursor-bubble {
@@ -1107,7 +1108,7 @@ input::placeholder {
 }
 
 .cursor-bubble p,
-.cursor-bubble input {
+.cursor-input-sizer {
   margin: 0;
   min-height: 0;
   padding: 8px 12px;
@@ -1123,12 +1124,37 @@ input::placeholder {
   -webkit-backdrop-filter: blur(10px);
 }
 
-.cursor-bubble input {
-  width: min(220px, 52vw);
-  outline: 0;
+.cursor-input-sizer {
+  display: inline-grid;
+  align-items: center;
+  width: fit-content;
+  min-width: 104px;
+  max-width: 100%;
+  cursor: none;
 }
 
-.cursor-bubble input::placeholder {
+.cursor-input-sizer > span {
+  grid-area: 1 / 1;
+  visibility: hidden;
+  white-space: pre;
+}
+
+.cursor-input-sizer input {
+  grid-area: 1 / 1;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
+  outline: 0;
+  cursor: none;
+}
+
+.cursor-input-sizer input::placeholder {
   color: rgba(244, 240, 232, 0.4);
 }
 
