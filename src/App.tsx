@@ -663,7 +663,10 @@ function ChatsPage() {
             const time = summary?.lastMessage?.createdAt ?? summary?.lastActivity ?? entry.lastJoinedAt;
 
             return (
-              <li className={`chat-room-item glass-card ${info.ended ? "ended" : ""}`} key={entry.roomId}>
+              <li
+                className={`chat-room-item glass-card ${info.ended ? "ended" : ""} ${info.live ? "live" : ""}`}
+                key={entry.roomId}
+              >
                 <button
                   className="chat-room-link"
                   type="button"

@@ -633,6 +633,59 @@ a.brand-mark {
   opacity: 0.55;
 }
 
+@property --led-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.chat-room-item.live {
+  position: relative;
+  border-color: rgba(201, 242, 95, 0.3);
+  box-shadow:
+    0 0 18px rgba(201, 242, 95, 0.12),
+    var(--glass-shadow);
+}
+
+.chat-room-item.live::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: 1;
+  padding: 2px;
+  background: conic-gradient(
+    from var(--led-angle),
+    transparent 0deg 264deg,
+    rgba(201, 242, 95, 0.4) 318deg,
+    #f4ffd6 352deg,
+    var(--accent) 357deg,
+    transparent 360deg
+  );
+  border-radius: inherit;
+  pointer-events: none;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: led-rotate 2.8s linear infinite;
+}
+
+@keyframes led-rotate {
+  to {
+    --led-angle: 360deg;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-room-item.live::before {
+    animation: none;
+  }
+}
+
 .chat-room-link {
   display: flex;
   flex: 1 1 auto;
