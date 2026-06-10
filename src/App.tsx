@@ -12,6 +12,7 @@ import {
   MessagesSquare,
   Play,
   Plus,
+  Pointer,
   Send,
   ShieldCheck,
   Smile,
@@ -75,6 +76,23 @@ type CountdownCommand = {
 type SlowPrompt = {
   nickname: string;
   seconds: number;
+};
+
+type CursorChatEvent = {
+  participantId: string;
+  nickname: string;
+  text: string;
+  x: number;
+  y: number;
+  at: number;
+};
+
+type TapPingEvent = {
+  id: string;
+  participantId: string;
+  nickname: string;
+  x: number;
+  y: number;
 };
 
 type JoinedRoomEntry = {
@@ -278,6 +296,18 @@ async function createRoomRequest(youtubeUrl: string, nickname: string) {
   if (!response.ok) throw new Error(data.message || "방을 만들 수 없습니다.");
   localStorage.setItem(STORAGE_NICKNAME, nickname);
   return data.inviteUrl as string;
+}
+
+const CURSOR_COLORS = ["#c9f25f", "#7cc8ff", "#ff9a82", "#c9a0ff", "#ffd166", "#6ee7b7"];
+
+function participantColor(id: string) {
+  let hash = 0;
+  for (let i = 0; i < id.length; i += 1) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+  return CURSOR_COLORS[hash % CURSOR_COLORS.length];
+}
+
+function clampRatio(value: number, min = 0, max = 1) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function getParticipantId() {
@@ -894,6 +924,10 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [videoUrlError, setVideoUrlError] = useState("");
   const [mobileVideoFormOpen, setMobileVideoFormOpen] = useState(false);
   const [initialPlaybackPending, setInitialPlaybackPending] = useState(false);
+  const [cursorChat, setCursorChat] = useState<{ x: number; y: number; text: string } | null>(null);
+  const [remoteBubbles, setRemoteBubbles] = useState<Record<string, CursorChatEvent>>({});
+  const [pings, setPings] = useState<TapPingEvent[]>([]);
+  const [pingMode, setPingMode] = useState(false);
 
   const socketRef = useRef<Socket | null>(null);
   const playerRef = useRef<YouTubePlayer | null>(null);
@@ -914,6 +948,10 @@ function RoomPage({ roomId }: { roomId: string }) {
   const lastKnownPlayerTimeRef = useRef(0);
   const currentVideoIdRef = useRef<string | null>(null);
   const lastBlockedNoticeRef = useRef(0);
+  const playerWrapRef = useRef<HTMLDivElement | null>(null);
+  const lastMouseRef = useRef<{ x: number; y: number } | null>(null);
+  const cursorChatRef = useRef<{ x: number; y: number; text: string } | null>(null);
+  const cursorEmitAtRef = useRef(0);
 
   const selfId = participantIdRef.current;
   const self = room?.participants.find((participant) => participant.id === selfId) || null;
@@ -1032,6 +1070,63 @@ function RoomPage({ roomId }: { roomId: string }) {
     });
   }, [isStaticPreview, joined, joinedVideoId, roomId]);
 
+  useEffect(() => {
+    cursorChatRef.current = cursorChat;
+  }, [cursorChat]);
+
+  useEffect(() => {
+    if (!joined) return;
+    const onMove = (event: MouseEvent) => {
+      lastMouseRef.current = { x: event.clientX, y: event.clientY };
+    };
+    window.addEventListener("mousemove", onMove);
+    return () => window.removeEventListener("mousemove", onMove);
+  }, [joined]);
+
+  useEffect(() => {
+    if (!joined) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.repeat) return;
+      if (window.matchMedia("(pointer: coarse)").matches) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && target.closest("input, textarea, [contenteditable]")) return;
+      const frame = playerWrapRef.current;
+      if (!frame) return;
+      event.preventDefault();
+
+      const rect = frame.getBoundingClientRect();
+      const mouse = lastMouseRef.current;
+      let x = 0.5;
+      let y = 0.4;
+      if (mouse && rect.width > 0 && rect.height > 0) {
+        x = clampRatio((mouse.x - rect.left) / rect.width, 0.02, 0.98);
+        y = clampRatio((mouse.y - rect.top) / rect.height, 0.05, 0.9);
+      }
+      setCursorChat({ x, y, text: "" });
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [joined]);
+
+  useEffect(() => {
+    if (!Object.keys(remoteBubbles).length) return;
+    const interval = window.setInterval(() => {
+      const cutoff = Date.now() - 6000;
+      setRemoteBubbles((current) => {
+        const alive = Object.entries(current).filter(([, bubble]) => bubble.at > cutoff);
+        if (alive.length === Object.keys(current).length) return current;
+        return Object.fromEntries(alive);
+      });
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [remoteBubbles]);
+
+  useEffect(() => {
+    if (!pingMode) return;
+    const timeout = window.setTimeout(() => setPingMode(false), 6000);
+    return () => window.clearTimeout(timeout);
+  }, [pingMode, pings.length]);
+
   const peersKey = JSON.stringify(
     room?.participants.filter((participant) => participant.id !== selfId).map((participant) => participant.nickname) ?? []
   );
@@ -1098,6 +1193,22 @@ function RoomPage({ roomId }: { roomId: string }) {
 
     socket.on("countdown-cancelled", () => {
       clearCountdown();
+    });
+
+    socket.on("cursor-chat", (event: CursorChatEvent) => {
+      setRemoteBubbles((current) => {
+        const next = { ...current };
+        if (event.text) next[event.participantId] = event;
+        else delete next[event.participantId];
+        return next;
+      });
+    });
+
+    socket.on("tap-ping", (event: TapPingEvent) => {
+      setPings((current) => [...current.slice(-11), event]);
+      window.setTimeout(() => {
+        setPings((current) => current.filter((ping) => ping.id !== event.id));
+      }, 1800);
     });
 
     return () => {
@@ -1570,6 +1681,60 @@ function RoomPage({ roomId }: { roomId: string }) {
     });
   }
 
+  function emitCursorChat(x: number, y: number, text: string, force = false) {
+    if (isStaticPreview) return;
+    const now = Date.now();
+    if (!force && now - cursorEmitAtRef.current < 80) return;
+    cursorEmitAtRef.current = now;
+    socketRef.current?.emit("cursor-chat", { roomId, participantId: selfId, text, x, y });
+  }
+
+  function moveCursorChat(event: React.PointerEvent<HTMLDivElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const x = clampRatio((event.clientX - rect.left) / rect.width, 0.02, 0.98);
+    const y = clampRatio((event.clientY - rect.top) / rect.height, 0.05, 0.9);
+    setCursorChat((current) => (current ? { ...current, x, y } : current));
+    emitCursorChat(x, y, cursorChatRef.current?.text ?? "");
+  }
+
+  function updateCursorChatText(text: string) {
+    const current = cursorChatRef.current;
+    if (!current) return;
+    setCursorChat({ ...current, text });
+    emitCursorChat(current.x, current.y, text, true);
+  }
+
+  function closeCursorChat(keepRemote: boolean) {
+    const current = cursorChatRef.current;
+    setCursorChat(null);
+    if (isStaticPreview || !current) return;
+    if (!keepRemote || !current.text.trim()) {
+      socketRef.current?.emit("cursor-chat", { roomId, participantId: selfId, text: "", x: current.x, y: current.y });
+    }
+  }
+
+  function sendPingAt(clientX: number, clientY: number) {
+    const frame = playerWrapRef.current;
+    if (!frame) return;
+    const rect = frame.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const x = clampRatio((clientX - rect.left) / rect.width);
+    const y = clampRatio((clientY - rect.top) / rect.height);
+    const ping: TapPingEvent = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      participantId: selfId,
+      nickname,
+      x,
+      y
+    };
+    setPings((current) => [...current.slice(-11), ping]);
+    window.setTimeout(() => setPings((current) => current.filter((item) => item.id !== ping.id)), 1800);
+    if (!isStaticPreview) {
+      socketRef.current?.emit("tap-ping", { roomId, participantId: selfId, x, y });
+    }
+  }
+
   function changeVideo(event: React.FormEvent) {
     event.preventDefault();
     const videoId = extractYouTubeId(nextVideoUrl);
@@ -1746,7 +1911,7 @@ function RoomPage({ roomId }: { roomId: string }) {
 
       <section className="watch-layout">
         <div className="watch-main">
-          <div className="player-frame">
+          <div className="player-frame" ref={playerWrapRef}>
             <div id="youtube-player" className="youtube-player" />
             {!playerReady && (
               <div className="player-loading">
@@ -1762,6 +1927,93 @@ function RoomPage({ roomId }: { roomId: string }) {
                 </span>
               </button>
             )}
+
+            {Object.values(remoteBubbles).map((bubble) => (
+              <div
+                className="cursor-bubble remote"
+                key={bubble.participantId}
+                style={
+                  {
+                    left: `${bubble.x * 100}%`,
+                    top: `${bubble.y * 100}%`,
+                    "--bubble-color": participantColor(bubble.participantId)
+                  } as React.CSSProperties
+                }
+              >
+                <span className="cursor-bubble-name">{bubble.nickname}</span>
+                <p>{bubble.text}</p>
+              </div>
+            ))}
+
+            {pings.map((ping) => (
+              <div
+                className="tap-ping"
+                key={ping.id}
+                style={
+                  {
+                    left: `${ping.x * 100}%`,
+                    top: `${ping.y * 100}%`,
+                    "--bubble-color": participantColor(ping.participantId)
+                  } as React.CSSProperties
+                }
+              >
+                <span className="tap-ping-ripple" />
+                <span className="tap-ping-name">{ping.nickname}</span>
+              </div>
+            ))}
+
+            {cursorChat && (
+              <div
+                className="cursor-chat-overlay"
+                onPointerMove={moveCursorChat}
+                onPointerDown={(event) => {
+                  if (event.target === event.currentTarget) event.preventDefault();
+                }}
+              >
+                <div
+                  className="cursor-bubble self"
+                  style={
+                    {
+                      left: `${cursorChat.x * 100}%`,
+                      top: `${cursorChat.y * 100}%`,
+                      "--bubble-color": participantColor(selfId)
+                    } as React.CSSProperties
+                  }
+                >
+                  <span className="cursor-bubble-name">{nickname}</span>
+                  <input
+                    autoFocus
+                    value={cursorChat.text}
+                    maxLength={80}
+                    placeholder="메시지 입력..."
+                    onChange={(event) => updateCursorChatText(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") closeCursorChat(true);
+                      if (event.key === "Escape") closeCursorChat(false);
+                    }}
+                    onBlur={() => closeCursorChat(true)}
+                  />
+                </div>
+              </div>
+            )}
+
+            {pingMode && (
+              <button
+                className="ping-overlay"
+                type="button"
+                aria-label="탭한 위치 포인팅"
+                onPointerDown={(event) => sendPingAt(event.clientX, event.clientY)}
+              />
+            )}
+            <button
+              className={`ping-toggle ${pingMode ? "active" : ""}`}
+              type="button"
+              aria-pressed={pingMode}
+              aria-label="여기 봐 포인터 모드"
+              onClick={() => setPingMode((current) => !current)}
+            >
+              <Pointer size={16} />
+            </button>
           </div>
           <div className="below-player">
             <div>

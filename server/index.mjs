@@ -94,6 +94,12 @@ function clearCountdown(room) {
   }
 }
 
+function clampRatio(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0.5;
+  return Math.min(1, Math.max(0, number));
+}
+
 function getRoomOrError(roomId, socket) {
   const room = rooms.get(roomId);
   if (!room) socket.emit("room-error", "방을 찾을 수 없습니다.");
@@ -432,6 +438,39 @@ io.on("connection", (socket) => {
     room.lastActivity = Date.now();
     io.to(roomId).emit("chat-message", message);
     io.to(roomId).emit("emoji-burst", message);
+  });
+
+  socket.on("cursor-chat", ({ roomId, participantId, text, x, y }) => {
+    const room = rooms.get(roomId);
+    if (!room) return;
+    const participant = room.participants.get(String(participantId));
+    if (!participant) return;
+
+    room.lastActivity = Date.now();
+    socket.to(roomId).emit("cursor-chat", {
+      participantId: participant.id,
+      nickname: participant.nickname,
+      text: String(text || "").slice(0, 80),
+      x: clampRatio(x),
+      y: clampRatio(y),
+      at: Date.now()
+    });
+  });
+
+  socket.on("tap-ping", ({ roomId, participantId, x, y }) => {
+    const room = rooms.get(roomId);
+    if (!room) return;
+    const participant = room.participants.get(String(participantId));
+    if (!participant) return;
+
+    room.lastActivity = Date.now();
+    socket.to(roomId).emit("tap-ping", {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      participantId: participant.id,
+      nickname: participant.nickname,
+      x: clampRatio(x),
+      y: clampRatio(y)
+    });
   });
 
   socket.on("disconnect", () => {
