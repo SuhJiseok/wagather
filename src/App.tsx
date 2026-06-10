@@ -82,6 +82,7 @@ type JoinedRoomEntry = {
   videoId: string | null;
   lastJoinedAt: number;
   isPreview?: boolean;
+  peers?: string[];
 };
 
 type PopularVideo = {
@@ -96,7 +97,7 @@ type RoomSummary = {
   active: boolean;
   videoId?: string;
   participantCount?: number;
-  participantNames?: string[];
+  participants?: { id: string; nickname: string }[];
   playbackState?: PlaybackState;
   lastMessage?: { author: string; text: string; type: "chat" | "emoji"; createdAt: number } | null;
   lastActivity?: number;
@@ -561,19 +562,30 @@ function CreateRoomModal({ initialUrl, onClose }: { initialUrl?: string; onClose
 }
 
 function describeRoom(entry: JoinedRoomEntry, summary: RoomSummary | null, loading: boolean) {
+  const rememberedTitle = entry.peers?.length ? entry.peers.join(", ") : "";
+
   if (entry.isPreview) {
-    return { title: "미리보기 방", preview: "이 기기에서만 보이는 방이에요.", ended: false, live: false, count: 0 };
+    return {
+      title: rememberedTitle || "미리보기 방",
+      preview: "이 기기에서만 보이는 방이에요.",
+      ended: false,
+      live: false,
+      count: 0
+    };
   }
   if (!summary) {
-    if (loading) return { title: "같이 보기 방", preview: "방 정보를 불러오는 중...", ended: false, live: false, count: 0 };
-    return { title: "같이 보기 방", preview: "종료된 방이에요.", ended: true, live: false, count: 0 };
+    if (loading) {
+      return { title: rememberedTitle || "같이 보기 방", preview: "방 정보를 불러오는 중...", ended: false, live: false, count: 0 };
+    }
+    return { title: rememberedTitle || "같이 보기 방", preview: "종료된 방이에요.", ended: true, live: false, count: 0 };
   }
   if (!summary.active) {
-    return { title: "같이 보기 방", preview: "종료된 방이에요.", ended: true, live: false, count: 0 };
+    return { title: rememberedTitle || "같이 보기 방", preview: "종료된 방이에요.", ended: true, live: false, count: 0 };
   }
 
-  const names = summary.participantNames || [];
-  const title = names.length ? names.join(", ") : "비어 있는 방";
+  const selfId = getParticipantId();
+  const others = (summary.participants || []).filter((participant) => participant.id !== selfId).map((participant) => participant.nickname);
+  const title = others.length ? others.join(", ") : rememberedTitle || "비어 있는 방";
   const preview = summary.lastMessage
     ? `${summary.lastMessage.author}: ${summary.lastMessage.text}`
     : "아직 대화가 없어요. 첫 반응을 남겨보세요.";
@@ -643,7 +655,7 @@ function ChatsPage() {
           </button>
         </div>
       ) : (
-        <ul className="chat-room-list glass-panel">
+        <ul className="chat-room-list">
           {entries.map((entry) => {
             const summary = entry.isPreview ? null : summaries[entry.roomId] ?? null;
             const info = describeRoom(entry, summary, loading);
@@ -651,7 +663,7 @@ function ChatsPage() {
             const time = summary?.lastMessage?.createdAt ?? summary?.lastActivity ?? entry.lastJoinedAt;
 
             return (
-              <li className={`chat-room-item ${info.ended ? "ended" : ""}`} key={entry.roomId}>
+              <li className={`chat-room-item glass-card ${info.ended ? "ended" : ""}`} key={entry.roomId}>
                 <button
                   className="chat-room-link"
                   type="button"
@@ -983,13 +995,28 @@ function RoomPage({ roomId }: { roomId: string }) {
   const joinedVideoId = room?.videoId ?? null;
   useEffect(() => {
     if (!joined || !joinedVideoId) return;
+    const existing = loadJoinedRooms().find((item) => item.roomId === roomId);
     rememberJoinedRoom({
+      ...existing,
       roomId,
       videoId: joinedVideoId,
       lastJoinedAt: Date.now(),
       isPreview: isStaticPreview
     });
   }, [isStaticPreview, joined, joinedVideoId, roomId]);
+
+  const peersKey = JSON.stringify(
+    room?.participants.filter((participant) => participant.id !== selfId).map((participant) => participant.nickname) ?? []
+  );
+  useEffect(() => {
+    const peers = JSON.parse(peersKey) as string[];
+    if (!joined || !peers.length) return;
+    const entry = loadJoinedRooms().find((item) => item.roomId === roomId);
+    if (!entry) return;
+    const merged = [...new Set([...peers, ...(entry.peers || [])])].slice(0, 6);
+    if (JSON.stringify(merged) === JSON.stringify(entry.peers || [])) return;
+    rememberJoinedRoom({ ...entry, peers: merged });
+  }, [joined, peersKey, roomId]);
 
   useEffect(() => {
     const messageList = messageListRef.current;

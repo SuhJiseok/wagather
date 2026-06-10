@@ -609,16 +609,24 @@ a.brand-mark {
 
 .chat-room-list {
   display: grid;
-  gap: 2px;
+  gap: 10px;
   margin: 0;
-  padding: 8px;
+  padding: 0;
   list-style: none;
 }
 
 .chat-room-item {
   display: flex;
   align-items: center;
-  border-radius: 18px;
+  background: var(--glass-bg);
+  transition:
+    transform 160ms ease,
+    background 160ms ease;
+}
+
+.chat-room-item:hover:not(.ended) {
+  transform: translateY(-1px);
+  background: var(--glass-bg-strong);
 }
 
 .chat-room-item.ended {
@@ -631,17 +639,12 @@ a.brand-mark {
   align-items: center;
   gap: 14px;
   min-width: 0;
-  padding: 11px 12px;
+  padding: 13px 14px;
   color: var(--text);
   text-align: left;
   background: transparent;
   border: 0;
-  border-radius: 18px;
-  transition: background 160ms ease;
-}
-
-.chat-room-link:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.06);
+  border-radius: inherit;
 }
 
 .chat-room-link:disabled {

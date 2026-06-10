@@ -155,7 +155,9 @@ app.get("/api/rooms/summary", (req, res) => {
       active: true,
       videoId: room.videoId,
       participantCount: room.participants.size,
-      participantNames: [...room.participants.values()].map((participant) => participant.nickname).slice(0, 6),
+      participants: [...room.participants.values()]
+        .slice(0, 6)
+        .map((participant) => ({ id: participant.id, nickname: participant.nickname })),
       playbackState: room.playback.state,
       lastMessage: lastMessage
         ? { author: lastMessage.author, text: lastMessage.text, type: lastMessage.type, createdAt: lastMessage.createdAt }
