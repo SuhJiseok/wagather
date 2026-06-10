@@ -110,6 +110,7 @@ const DRIFT_THRESHOLD = 3;
 const SEEK_COMMAND_THRESHOLD = 1.5;
 const ROOM_VISUAL_HEIGHT_VAR = "--room-visual-height";
 const ROOM_KEYBOARD_INSET_VAR = "--room-keyboard-inset";
+const ROOM_VIEWPORT_OFFSET_VAR = "--room-viewport-offset";
 
 function syncRoomViewportVars() {
   if (typeof window === "undefined") return;
@@ -122,11 +123,15 @@ function syncRoomViewportVars() {
   const root = document.documentElement;
   const nextHeight = `${Math.round(height)}px`;
   const nextInset = `${Math.round(keyboardInset)}px`;
+  const nextOffset = `${Math.round(offsetTop)}px`;
   if (root.style.getPropertyValue(ROOM_VISUAL_HEIGHT_VAR) !== nextHeight) {
     root.style.setProperty(ROOM_VISUAL_HEIGHT_VAR, nextHeight);
   }
   if (root.style.getPropertyValue(ROOM_KEYBOARD_INSET_VAR) !== nextInset) {
     root.style.setProperty(ROOM_KEYBOARD_INSET_VAR, nextInset);
+  }
+  if (root.style.getPropertyValue(ROOM_VIEWPORT_OFFSET_VAR) !== nextOffset) {
+    root.style.setProperty(ROOM_VIEWPORT_OFFSET_VAR, nextOffset);
   }
 }
 
@@ -135,6 +140,7 @@ function clearRoomViewportVars() {
 
   document.documentElement.style.removeProperty(ROOM_VISUAL_HEIGHT_VAR);
   document.documentElement.style.removeProperty(ROOM_KEYBOARD_INSET_VAR);
+  document.documentElement.style.removeProperty(ROOM_VIEWPORT_OFFSET_VAR);
 }
 
 function loadJoinedRooms(): JoinedRoomEntry[] {
@@ -176,6 +182,28 @@ function formatRelativeTime(timestamp: number) {
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}시간 전`;
   return `${Math.floor(diff / 86_400_000)}일 전`;
 }
+
+const FALLBACK_POPULAR: PopularVideo[] = (
+  [
+    ["9bZkp7q19f0", "PSY - GANGNAM STYLE(강남스타일) M/V", "officialpsy"],
+    ["gdZLi9oWNZg", "BTS (방탄소년단) 'Dynamite' Official MV", "HYBE LABELS"],
+    ["WMweEpGlu_U", "BTS (방탄소년단) 'Butter' Official MV", "HYBE LABELS"],
+    ["IHNzOHi8sJs", "BLACKPINK - '뚜두뚜두 (DDU-DU DDU-DU)' M/V", "BLACKPINK"],
+    ["ioNng23DkIM", "BLACKPINK - 'How You Like That' M/V", "BLACKPINK"],
+    ["XqZsoesa55w", "Baby Shark Dance | 상어가족", "Pinkfong Baby Shark"],
+    ["kJQP7kiw5Fk", "Luis Fonsi - Despacito ft. Daddy Yankee", "Luis Fonsi"],
+    ["JGwWNGJdvx8", "Ed Sheeran - Shape of You (Official Music Video)", "Ed Sheeran"],
+    ["OPf0YbXqDm0", "Mark Ronson - Uptown Funk ft. Bruno Mars", "Mark Ronson"],
+    ["fJ9rUzIMcZQ", "Queen - Bohemian Rhapsody (Official Video)", "Queen Official"],
+    ["60ItHLz5WEA", "Alan Walker - Faded", "Alan Walker"],
+    ["dQw4w9WgXcQ", "Rick Astley - Never Gonna Give You Up (Official Video)", "Rick Astley"]
+  ] as const
+).map(([videoId, title, author]) => ({
+  videoId,
+  title,
+  author,
+  thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`
+}));
 
 function navigate(to: string) {
   window.history.pushState({}, "", to);
@@ -448,6 +476,14 @@ function CreateRoomModal({ initialUrl, onClose }: { initialUrl?: string; onClose
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
   async function createRoom(event: React.FormEvent) {
     event.preventDefault();
     setError("");
@@ -477,6 +513,7 @@ function CreateRoomModal({ initialUrl, onClose }: { initialUrl?: string; onClose
   return (
     <div className="modal-layer" role="dialog" aria-modal="true" aria-label="새 방 만들기" onClick={onClose}>
       <div className="modal-card glass-panel" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-handle" aria-hidden="true" />
         <button className="modal-close" type="button" aria-label="닫기" onClick={onClose}>
           <X size={17} />
         </button>
@@ -597,11 +634,11 @@ function ChatsPage() {
       </header>
 
       {entries.length === 0 ? (
-        <div className="chats-empty glass-panel">
-          <MessagesSquare size={30} />
+        <div className="empty-card glass-panel">
+          <MessagesSquare size={26} />
           <strong>아직 참여한 방이 없어요</strong>
-          <p>홈에서 유튜브 링크 하나로 첫 방을 만들어 보세요.</p>
-          <button className="primary-button" type="button" onClick={() => navigate("/")}>
+          <p>유튜브 링크 하나로 첫 방을 만들어 보세요.</p>
+          <button className="primary-button" type="button" onClick={() => setCreateOpen(true)}>
             <Play size={18} />새 방 만들기
           </button>
         </div>
@@ -668,10 +705,10 @@ function HomePage() {
         return response.json();
       })
       .then((data: { videos: PopularVideo[] }) => {
-        if (!cancelled) setPopular(data.videos || []);
+        if (!cancelled) setPopular(data.videos?.length ? data.videos : FALLBACK_POPULAR);
       })
       .catch(() => {
-        if (!cancelled) setPopular([]);
+        if (!cancelled) setPopular(FALLBACK_POPULAR);
       });
     return () => {
       cancelled = true;
@@ -705,18 +742,29 @@ function HomePage() {
         </button>
       </section>
 
-      {railRooms.length > 0 && (
-        <section className="home-rooms" aria-label="참여 중인 채팅방">
-          <div className="rail-head">
-            <h2>
-              <MessagesSquare size={20} />
-              참여 중인 채팅방
-            </h2>
+      <section className="home-rooms" aria-label="참여 중인 채팅방">
+        <div className="rail-head">
+          <h2>
+            <MessagesSquare size={20} />
+            참여 중인 채팅방
+          </h2>
+          {railRooms.length > 0 && (
             <button className="rail-more" type="button" onClick={() => navigate("/chats")}>
               전체 보기
               <ChevronRight size={16} />
             </button>
+          )}
+        </div>
+        {railRooms.length === 0 ? (
+          <div className="empty-card glass-panel">
+            <MessagesSquare size={26} />
+            <strong>아직 참여한 방이 없어요</strong>
+            <p>새 방을 만들어 친구에게 초대 링크를 보내보세요.</p>
+            <button className="primary-button" type="button" onClick={() => setCreateModalUrl("")}>
+              <Play size={18} />새 방 만들기
+            </button>
           </div>
+        ) : (
           <div className="room-rail">
             {railRooms.map((entry) => (
               <RoomCard
@@ -727,17 +775,23 @@ function HomePage() {
               />
             ))}
           </div>
-        </section>
-      )}
+        )}
+      </section>
 
-      {(popular === null || popular.length > 0) && (
-        <section className="home-rooms" aria-label="지금 인기 있는 영상">
-          <div className="rail-head">
-            <h2>
-              <Flame size={20} />
-              지금 인기 있는 영상
-            </h2>
+      <section className="home-rooms" aria-label="지금 인기 있는 영상">
+        <div className="rail-head">
+          <h2>
+            <Flame size={20} />
+            지금 인기 있는 영상
+          </h2>
+        </div>
+        {popular !== null && popular.length === 0 ? (
+          <div className="empty-card glass-panel">
+            <Flame size={26} />
+            <strong>추천 영상을 불러오지 못했어요</strong>
+            <p>잠시 후 다시 시도하거나, 새 방 만들기로 직접 유튜브 링크를 붙여보세요.</p>
           </div>
+        ) : (
           <div className="video-grid">
             {popular === null
               ? Array.from({ length: 8 }, (_, index) => (
@@ -772,8 +826,8 @@ function HomePage() {
                   </button>
                 ))}
           </div>
-        </section>
-      )}
+        )}
+      </section>
 
       {createModalUrl !== null && <CreateRoomModal initialUrl={createModalUrl} onClose={() => setCreateModalUrl(null)} />}
     </main>
