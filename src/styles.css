@@ -625,9 +625,9 @@ a.brand-mark {
 .chat-room-item.live,
 .room-card.live {
   position: relative;
-  border-color: rgba(201, 242, 95, 0.3);
+  border-color: rgba(201, 242, 95, 0.2);
   box-shadow:
-    0 0 18px rgba(201, 242, 95, 0.12),
+    0 0 22px rgba(201, 242, 95, 0.07),
     var(--glass-shadow);
 }
 
@@ -651,17 +651,27 @@ a.brand-mark {
 }
 
 .live-ring-track {
-  stroke: rgba(201, 242, 95, 0.16);
-  stroke-width: 1.5px;
+  stroke: rgba(201, 242, 95, 0.09);
+  stroke-width: 1px;
+}
+
+.live-ring-glow {
+  stroke: url(#led-grad);
+  stroke-width: 6px;
+  stroke-linecap: round;
+  stroke-dasharray: 22 78;
+  opacity: 0.3;
+  filter: blur(4px);
+  animation: led-travel 4.4s linear infinite;
 }
 
 .live-ring-comet {
-  stroke: var(--accent);
-  stroke-width: 2.5px;
+  stroke: url(#led-grad);
+  stroke-width: 1.8px;
   stroke-linecap: round;
-  stroke-dasharray: 14 86;
-  animation: led-travel 3.2s linear infinite;
-  filter: drop-shadow(0 0 5px rgba(201, 242, 95, 0.7));
+  stroke-dasharray: 22 78;
+  opacity: 0.8;
+  animation: led-travel 4.4s linear infinite;
 }
 
 @keyframes led-travel {
@@ -674,6 +684,7 @@ a.brand-mark {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .live-ring-glow,
   .live-ring-comet {
     animation: none;
   }

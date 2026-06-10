@@ -601,7 +601,15 @@ function describeRoom(entry: JoinedRoomEntry, summary: RoomSummary | null, loadi
 function LiveRing() {
   return (
     <svg className="live-ring" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="led-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#c9f25f" stopOpacity="0.9" />
+          <stop offset="50%" stopColor="#b9ecc9" stopOpacity="0.65" />
+          <stop offset="100%" stopColor="#c9f25f" stopOpacity="0.9" />
+        </linearGradient>
+      </defs>
       <rect className="live-ring-track" pathLength={100} />
+      <rect className="live-ring-glow" pathLength={100} />
       <rect className="live-ring-comet" pathLength={100} />
     </svg>
   );
