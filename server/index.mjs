@@ -138,6 +138,84 @@ app.post("/api/rooms", (req, res) => {
   res.json({ roomId: id, inviteUrl: `/room/${id}`, nickname });
 });
 
+app.get("/api/rooms/summary", (req, res) => {
+  const ids = String(req.query.ids || "")
+    .split(",")
+    .map((value) => value.trim().toUpperCase())
+    .filter(Boolean)
+    .slice(0, 50);
+
+  const summaries = ids.map((id) => {
+    const room = rooms.get(id);
+    if (!room) return { id, active: false };
+
+    const lastMessage = room.messages[room.messages.length - 1] || null;
+    return {
+      id,
+      active: true,
+      videoId: room.videoId,
+      participantCount: room.participants.size,
+      participantNames: [...room.participants.values()].map((participant) => participant.nickname).slice(0, 6),
+      playbackState: room.playback.state,
+      lastMessage: lastMessage
+        ? { author: lastMessage.author, text: lastMessage.text, type: lastMessage.type, createdAt: lastMessage.createdAt }
+        : null,
+      lastActivity: room.lastActivity
+    };
+  });
+
+  res.json({ rooms: summaries });
+});
+
+const POPULAR_VIDEO_IDS = [
+  "9bZkp7q19f0",
+  "gdZLi9oWNZg",
+  "WMweEpGlu_U",
+  "IHNzOHi8sJs",
+  "ioNng23DkIM",
+  "XqZsoesa55w",
+  "kJQP7kiw5Fk",
+  "JGwWNGJdvx8",
+  "OPf0YbXqDm0",
+  "fJ9rUzIMcZQ",
+  "60ItHLz5WEA",
+  "dQw4w9WgXcQ"
+];
+const POPULAR_CACHE_TTL = 6 * 60 * 60 * 1000;
+let popularCache = { fetchedAt: 0, videos: [] };
+
+app.get("/api/videos/popular", async (_, res) => {
+  const now = Date.now();
+  if (popularCache.videos.length && now - popularCache.fetchedAt < POPULAR_CACHE_TTL) {
+    res.json({ videos: popularCache.videos });
+    return;
+  }
+
+  const videos = (
+    await Promise.all(
+      POPULAR_VIDEO_IDS.map(async (videoId) => {
+        try {
+          const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+          const response = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(watchUrl)}&format=json`);
+          if (!response.ok) return null;
+          const data = await response.json();
+          return {
+            videoId,
+            title: String(data.title || ""),
+            author: String(data.author_name || ""),
+            thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`
+          };
+        } catch {
+          return null;
+        }
+      })
+    )
+  ).filter(Boolean);
+
+  if (videos.length) popularCache = { fetchedAt: now, videos };
+  res.json({ videos });
+});
+
 io.on("connection", (socket) => {
   socket.on("join-room", ({ roomId, participantId, nickname }) => {
     const room = getRoomOrError(roomId, socket);
