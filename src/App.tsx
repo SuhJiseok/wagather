@@ -598,30 +598,40 @@ function describeRoom(entry: JoinedRoomEntry, summary: RoomSummary | null, loadi
   };
 }
 
+function LiveRing() {
+  return (
+    <svg className="live-ring" aria-hidden="true" focusable="false">
+      <rect className="live-ring-track" pathLength={100} />
+      <rect className="live-ring-comet" pathLength={100} />
+    </svg>
+  );
+}
+
 function RoomCard({ entry, summary, loading }: { entry: JoinedRoomEntry; summary: RoomSummary | null; loading: boolean }) {
   const info = describeRoom(entry, summary, loading);
   const thumb = videoThumbnail(summary?.videoId ?? entry.videoId);
+  const showCount = Boolean(!entry.isPreview && summary?.active);
 
   return (
     <button
-      className={`room-card glass-card ${info.ended ? "ended" : ""}`}
+      className={`room-card glass-card ${info.ended ? "ended" : ""} ${info.live ? "live" : ""}`}
       type="button"
       disabled={info.ended}
       onClick={() => navigate(joinedRoomPath(entry))}
     >
+      {info.live && <LiveRing />}
       <div className="room-thumb">
         {thumb ? <img src={thumb} alt="" loading="lazy" /> : <Clapperboard size={24} />}
-        {info.live && <span className="live-badge">LIVE</span>}
-        {info.count > 0 && (
-          <span className="thumb-count">
-            <UsersRound size={12} />
-            {info.count}
-          </span>
-        )}
       </div>
       <div className="room-card-body">
         <strong>{info.title}</strong>
-        <span>
+        <span className="room-card-meta">
+          {showCount && (
+            <span className="people-chip" aria-label={`참여자 ${info.count}명`}>
+              <UsersRound size={13} />
+              {info.count}
+            </span>
+          )}
           ROOM {entry.roomId} · {formatRelativeTime(entry.lastJoinedAt)}
         </span>
       </div>
@@ -667,6 +677,7 @@ function ChatsPage() {
                 className={`chat-room-item glass-card ${info.ended ? "ended" : ""} ${info.live ? "live" : ""}`}
                 key={entry.roomId}
               >
+                {info.live && <LiveRing />}
                 <button
                   className="chat-room-link"
                   type="button"
@@ -680,7 +691,12 @@ function ChatsPage() {
                   <div className="chat-room-main">
                     <div className="chat-room-top">
                       <strong>{info.title}</strong>
-                      {info.count > 0 && <span className="chat-room-count">{info.count}</span>}
+                      {!entry.isPreview && summary?.active && (
+                        <span className="people-chip" aria-label={`참여자 ${info.count}명`}>
+                          <UsersRound size={13} />
+                          {info.count}
+                        </span>
+                      )}
                       <time className="chat-room-time">{formatRelativeTime(time)}</time>
                     </div>
                     <p className="chat-room-preview">{info.preview}</p>
