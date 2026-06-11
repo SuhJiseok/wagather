@@ -21,6 +21,8 @@ app.get("/favicon.ico", (_, res) => {
 });
 
 const rooms = new Map();
+const VIDEO_METADATA_CACHE_TTL = 24 * 60 * 60 * 1000;
+const videoMetadataCache = new Map();
 
 function makeRoomId() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -51,6 +53,87 @@ function normalizeParticipantId(participantId) {
   return String(participantId || "").trim().slice(0, 80);
 }
 
+function normalizeVideoTitle(title) {
+  const normalized = String(title || "").trim();
+  return normalized ? normalized.slice(0, 180) : null;
+}
+
+async function fetchYouTubeVideoMetadata(videoId) {
+  const cached = videoMetadataCache.get(videoId);
+  const now = Date.now();
+  if (cached && now - cached.fetchedAt < VIDEO_METADATA_CACHE_TTL) {
+    return cached.metadata;
+  }
+
+  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2500);
+
+  try {
+    const response = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(watchUrl)}&format=json`, {
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      console.warn(`YouTube metadata request failed for ${videoId}: ${response.status}`);
+      return null;
+    }
+    const data = await response.json();
+    const title = normalizeVideoTitle(data.title);
+    if (!title) return null;
+    const metadata = {
+      title,
+      author: normalizeVideoTitle(data.author_name)
+    };
+    videoMetadataCache.set(videoId, { fetchedAt: now, metadata });
+    return metadata;
+  } catch (error) {
+    console.warn(
+      `YouTube metadata request failed for ${videoId}:`,
+      error instanceof Error ? error.message : String(error)
+    );
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function createVideoHistoryItem(videoId, addedAt, addedBy, title = null) {
+  return {
+    videoId,
+    title: normalizeVideoTitle(title),
+    addedAt,
+    addedBy
+  };
+}
+
+function compactVideoHistory(history) {
+  const latestByVideo = new Map();
+  for (const item of Array.isArray(history) ? history : []) {
+    if (!item?.videoId || !Number.isFinite(item.addedAt)) continue;
+    const current = latestByVideo.get(item.videoId);
+    if (!current || item.addedAt >= current.addedAt) {
+      latestByVideo.set(
+        item.videoId,
+        createVideoHistoryItem(item.videoId, item.addedAt, item.addedBy || null, item.title || current?.title || null)
+      );
+    }
+  }
+
+  return [...latestByVideo.values()].sort((a, b) => a.addedAt - b.addedAt).slice(-30);
+}
+
+function appendVideoHistory(history, item) {
+  return compactVideoHistory([...(Array.isArray(history) ? history : []), item]);
+}
+
+function roomVideoHistory(room) {
+  if (Array.isArray(room.videoHistory) && room.videoHistory.length) {
+    return compactVideoHistory(room.videoHistory);
+  }
+
+  return [createVideoHistoryItem(room.videoId, room.createdAt, null)];
+}
+
 function serializeRoom(room) {
   const playback = normalizedPlayback(room);
   const participants = [...room.participants.values()].map((participant) => ({
@@ -72,6 +155,7 @@ function serializeRoom(room) {
     controlId: room.controlId,
     playback,
     hasShownInitialCountdown: room.hasShownInitialCountdown,
+    videoHistory: roomVideoHistory(room),
     participants,
     messages: room.messages.slice(-60)
   };
@@ -116,7 +200,7 @@ function getSocketParticipant(room, socket, participantId) {
   return room.participants.get(id) || null;
 }
 
-app.post("/api/rooms", (req, res) => {
+app.post("/api/rooms", async (req, res) => {
   const videoId = extractYouTubeId(String(req.body.youtubeUrl || ""));
   const nickname = String(req.body.nickname || "").trim().slice(0, 20);
   const hostId = normalizeParticipantId(req.body.participantId);
@@ -139,20 +223,23 @@ app.post("/api/rooms", (req, res) => {
   let id = makeRoomId();
   while (rooms.has(id)) id = makeRoomId();
 
+  const now = Date.now();
+  const videoMetadata = await fetchYouTubeVideoMetadata(videoId);
   rooms.set(id, {
     id,
     videoId,
     hostId,
     controlId: hostId,
-    createdAt: Date.now(),
-    lastActivity: Date.now(),
+    createdAt: now,
+    lastActivity: now,
     playback: {
       state: "paused",
       time: 0,
-      updatedAt: Date.now()
+      updatedAt: now
     },
     hasShownInitialCountdown: false,
     countdownTimer: null,
+    videoHistory: [createVideoHistoryItem(videoId, now, nickname, videoMetadata?.title)],
     participants: new Map(),
     messages: []
   });
@@ -218,20 +305,14 @@ app.get("/api/videos/popular", async (_, res) => {
   const videos = (
     await Promise.all(
       POPULAR_VIDEO_IDS.map(async (videoId) => {
-        try {
-          const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
-          const response = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(watchUrl)}&format=json`);
-          if (!response.ok) return null;
-          const data = await response.json();
-          return {
-            videoId,
-            title: String(data.title || ""),
-            author: String(data.author_name || ""),
-            thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`
-          };
-        } catch {
-          return null;
-        }
+        const metadata = await fetchYouTubeVideoMetadata(videoId);
+        if (!metadata) return null;
+        return {
+          videoId,
+          title: metadata.title,
+          author: metadata.author || "",
+          thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`
+        };
       })
     )
   ).filter(Boolean);
@@ -357,7 +438,7 @@ io.on("connection", (socket) => {
     emitRoom(room);
   });
 
-  socket.on("change-video", ({ roomId, participantId, youtubeUrl }) => {
+  socket.on("change-video", async ({ roomId, participantId, youtubeUrl }) => {
     const room = getRoomOrError(roomId, socket);
     if (!room) return;
 
@@ -379,9 +460,15 @@ io.on("connection", (socket) => {
     io.to(roomId).emit("countdown-cancelled");
 
     const now = Date.now();
+    const videoMetadata = await fetchYouTubeVideoMetadata(videoId);
+    const history = roomVideoHistory(room);
     room.videoId = videoId;
     room.playback = { state: "paused", time: 0, updatedAt: now };
     room.hasShownInitialCountdown = false;
+    room.videoHistory = appendVideoHistory(
+      history,
+      createVideoHistoryItem(videoId, now, participant.nickname, videoMetadata?.title)
+    );
     room.lastActivity = now;
 
     for (const viewer of room.participants.values()) {
@@ -435,7 +522,7 @@ io.on("connection", (socket) => {
     const reaction = isEmojiLike ? emoji : "👏";
     if (!participant) return;
 
-    const message = {
+    const reactionMessage = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       type: "emoji",
       authorId: participant.id,
@@ -444,10 +531,8 @@ io.on("connection", (socket) => {
       videoTime: Number.isFinite(videoTime) ? Math.max(0, Number(videoTime)) : 0,
       createdAt: Date.now()
     };
-    room.messages.push(message);
     room.lastActivity = Date.now();
-    io.to(roomId).emit("chat-message", message);
-    io.to(roomId).emit("emoji-burst", message);
+    io.to(roomId).emit("emoji-burst", reactionMessage);
   });
 
   socket.on("cursor-chat", ({ roomId, participantId, text, x, y }) => {

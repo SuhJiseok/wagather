@@ -9,6 +9,7 @@ import {
   Home,
   Link as LinkIcon,
   LogIn,
+  Menu,
   MessageCircle,
   MessagesSquare,
   Play,
@@ -47,6 +48,13 @@ type ChatMessage = {
   createdAt: number;
 };
 
+type VideoHistoryItem = {
+  videoId: string;
+  title: string | null;
+  addedAt: number;
+  addedBy: string | null;
+};
+
 type RoomState = {
   id: string;
   videoId: string;
@@ -58,6 +66,7 @@ type RoomState = {
     updatedAt: number;
   };
   hasShownInitialCountdown: boolean;
+  videoHistory: VideoHistoryItem[];
   participants: Participant[];
   messages: ChatMessage[];
 };
@@ -72,6 +81,10 @@ type CountdownCommand = {
   sourceId: string;
   playback: RoomState["playback"];
   playAt: number;
+};
+
+type EmojiBurstEvent = {
+  text: string;
 };
 
 type CursorChatEvent = {
@@ -99,9 +112,20 @@ type EmojiBalloon = {
   duration: number;
   delay: number;
   drift: number;
+  expiresAt: number;
+};
+
+type RoomHeaderAction = {
+  key: string;
+  label: string;
+  icon: React.ReactNode;
+  onSelect: () => void | Promise<void>;
+  tone?: "exit";
 };
 
 const QUICK_EMOJIS = ["😂", "😱", "👏", "❤️", "😮", "🔥"];
+const EMOJI_BALLOONS_PER_BURST = 6;
+const MAX_EMOJI_BALLOONS = 48;
 
 type JoinedRoomEntry = {
   roomId: string;
@@ -249,6 +273,22 @@ function formatRelativeTime(timestamp: number) {
   return `${Math.floor(diff / 86_400_000)}일 전`;
 }
 
+function formatRecentWatchedAt(timestamp: number) {
+  const diff = Math.max(0, Date.now() - timestamp);
+  if (diff < 60_000) return "방금 전";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}분 전`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}시간 전`;
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(new Date(timestamp));
+}
+
 const FALLBACK_POPULAR: PopularVideo[] = (
   [
     ["9bZkp7q19f0", "PSY - GANGNAM STYLE(강남스타일) M/V", "officialpsy"],
@@ -270,6 +310,15 @@ const FALLBACK_POPULAR: PopularVideo[] = (
   author,
   thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`
 }));
+const KNOWN_VIDEO_TITLE_BY_ID = new Map(FALLBACK_POPULAR.map((video) => [video.videoId, video.title]));
+
+function knownVideoTitle(videoId: string) {
+  return KNOWN_VIDEO_TITLE_BY_ID.get(videoId) || null;
+}
+
+function roomActionWidth(label: string) {
+  return Math.min(220, Math.max(78, Array.from(label).length * 13 + 34));
+}
 
 function navigate(to: string) {
   window.history.pushState({}, "", to);
@@ -398,22 +447,73 @@ function makeLocalRoomId() {
   return `PREVIEW-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
 }
 
-function getStaticRoomVideoId(roomId: string) {
-  const params = new URLSearchParams(window.location.search);
-  const queryVideo = params.get("video");
-  if (queryVideo) return queryVideo;
-
+function getStaticRoomData(roomId: string): { videoId?: string; videoHistory?: VideoHistoryItem[]; createdAt?: number } | null {
   try {
     const saved = localStorage.getItem(`${STATIC_ROOM_PREFIX}${roomId}`);
     if (!saved) return null;
-    const parsed = JSON.parse(saved) as { videoId?: string };
-    return parsed.videoId || null;
+    const parsed = JSON.parse(saved);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as { videoId?: string; videoHistory?: VideoHistoryItem[]; createdAt?: number };
   } catch {
     return null;
   }
 }
 
+function getStaticRoomVideoId(roomId: string) {
+  const params = new URLSearchParams(window.location.search);
+  const queryVideo = params.get("video");
+  if (queryVideo) return queryVideo;
+
+  return getStaticRoomData(roomId)?.videoId || null;
+}
+
+function makeVideoHistoryItem(
+  videoId: string,
+  addedAt: number,
+  addedBy: string | null,
+  title: string | null = knownVideoTitle(videoId)
+): VideoHistoryItem {
+  return { videoId, title, addedAt, addedBy };
+}
+
+function compactVideoHistory(history: VideoHistoryItem[]) {
+  const latestByVideo = new Map<string, VideoHistoryItem>();
+  for (const item of history) {
+    if (!item.videoId || !Number.isFinite(item.addedAt)) continue;
+    const current = latestByVideo.get(item.videoId);
+    if (!current || item.addedAt >= current.addedAt) {
+      latestByVideo.set(item.videoId, {
+        videoId: item.videoId,
+        title: item.title || current?.title || knownVideoTitle(item.videoId),
+        addedAt: item.addedAt,
+        addedBy: item.addedBy || null
+      });
+    }
+  }
+
+  return [...latestByVideo.values()].sort((a, b) => a.addedAt - b.addedAt).slice(-30);
+}
+
+function visibleVideoHistory(history: VideoHistoryItem[]) {
+  return compactVideoHistory(history).sort((a, b) => b.addedAt - a.addedAt);
+}
+
+function normalizeVideoHistory(
+  history: VideoHistoryItem[] | undefined,
+  currentVideoId: string,
+  addedAt: number,
+  addedBy: string | null
+) {
+  const validHistory = Array.isArray(history)
+    ? history.filter((item) => item.videoId && Number.isFinite(item.addedAt))
+    : [];
+  if (validHistory.length) return compactVideoHistory(validHistory);
+  return [makeVideoHistoryItem(currentVideoId, addedAt, addedBy)];
+}
+
 function makeStaticRoomState(roomId: string, videoId: string, participantId: string, nickname: string): RoomState {
+  const staticData = getStaticRoomData(roomId);
+  const now = Date.now();
   return {
     id: roomId,
     videoId,
@@ -425,6 +525,7 @@ function makeStaticRoomState(roomId: string, videoId: string, participantId: str
       updatedAt: Date.now()
     },
     hasShownInitialCountdown: false,
+    videoHistory: normalizeVideoHistory(staticData?.videoHistory, videoId, staticData?.createdAt || now, nickname),
     participants: [
       {
         id: participantId,
@@ -697,8 +798,16 @@ function CreateRoomModal({ initialUrl, onClose }: { initialUrl?: string; onClose
       const videoId = extractYouTubeId(youtubeUrl);
       if (videoId && trimmedName) {
         const roomId = makeLocalRoomId();
+        const now = Date.now();
         localStorage.setItem(STORAGE_NICKNAME, trimmedName);
-        localStorage.setItem(`${STATIC_ROOM_PREFIX}${roomId}`, JSON.stringify({ videoId, createdAt: Date.now() }));
+        localStorage.setItem(
+          `${STATIC_ROOM_PREFIX}${roomId}`,
+          JSON.stringify({
+            videoId,
+            createdAt: now,
+            videoHistory: [makeVideoHistoryItem(videoId, now, trimmedName)]
+          })
+        );
         onClose();
         navigate(`/room/${roomId}?video=${encodeURIComponent(videoId)}&preview=1`);
         return;
@@ -1090,6 +1199,9 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [nextVideoUrl, setNextVideoUrl] = useState("");
   const [videoUrlError, setVideoUrlError] = useState("");
   const [videoModalOpen, setVideoModalOpen] = useState(false);
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [roomMenuOpen, setRoomMenuOpen] = useState(false);
+  const [hoveredRoomAction, setHoveredRoomAction] = useState<string | null>(null);
   const [initialPlaybackPending, setInitialPlaybackPending] = useState(false);
   const [cursorChat, setCursorChat] = useState<{ x: number; y: number; text: string } | null>(null);
   const [remoteBubbles, setRemoteBubbles] = useState<Record<string, CursorChatEvent>>({});
@@ -1198,6 +1310,41 @@ function RoomPage({ roomId }: { roomId: string }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [videoModalOpen]);
+
+  useEffect(() => {
+    if (!historyModalOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setHistoryModalOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [historyModalOpen]);
+
+  useEffect(() => {
+    if (!roomMenuOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setRoomMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [roomMenuOpen]);
+
+  useEffect(() => {
+    if (!roomMenuOpen) setHoveredRoomAction(null);
+  }, [roomMenuOpen]);
+
+  useEffect(() => {
+    if (!emojiBursts.length) return;
+
+    const now = Date.now();
+    const nextExpiry = Math.min(...emojiBursts.map((balloon) => balloon.expiresAt));
+    const timeout = window.setTimeout(() => {
+      const currentTime = Date.now();
+      setEmojiBursts((current) => current.filter((balloon) => balloon.expiresAt > currentTime));
+    }, Math.max(80, nextExpiry - now));
+
+    return () => window.clearTimeout(timeout);
+  }, [emojiBursts]);
 
   useEffect(() => {
     roomRef.current = room;
@@ -1425,7 +1572,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       }, 1800);
     });
 
-    socket.on("emoji-burst", (message: ChatMessage) => {
+    socket.on("emoji-burst", (message: EmojiBurstEvent) => {
       spawnEmojiBurst(message.text);
     });
 
@@ -1807,35 +1954,31 @@ function RoomPage({ roomId }: { roomId: string }) {
   }
 
   function spawnEmojiBurst(emoji: string) {
-    const count = 5 + Math.floor(Math.random() * 3);
-    const batch: EmojiBalloon[] = Array.from({ length: count }, (_, index) => ({
-      id: `${Date.now()}-${Math.random().toString(36).slice(2)}-${index}`,
-      emoji,
-      x: 8 + Math.random() * 84,
-      size: 18 + Math.random() * 14,
-      duration: 1800 + Math.random() * 1200,
-      delay: index * 90 + Math.random() * 120,
-      drift: -36 + Math.random() * 72
-    }));
-    setEmojiBursts((current) => [...current, ...batch].slice(-60));
-    const maxLife = Math.max(...batch.map((balloon) => balloon.duration + balloon.delay)) + 200;
-    window.setTimeout(() => {
-      setEmojiBursts((current) => current.filter((balloon) => !batch.some((item) => item.id === balloon.id)));
-    }, maxLife);
+    const now = Date.now();
+    setEmojiBursts((current) => {
+      const active = current.filter((balloon) => balloon.expiresAt > now);
+      const count = active.length > MAX_EMOJI_BALLOONS * 0.7 ? 3 : EMOJI_BALLOONS_PER_BURST;
+      const batch: EmojiBalloon[] = Array.from({ length: count }, (_, index) => {
+        const duration = 1400 + Math.random() * 900;
+        const delay = index * 45 + Math.random() * 80;
+        return {
+          id: `${now}-${Math.random().toString(36).slice(2)}-${index}`,
+          emoji,
+          x: 8 + Math.random() * 84,
+          size: 17 + Math.random() * 11,
+          duration,
+          delay,
+          drift: -34 + Math.random() * 68,
+          expiresAt: now + duration + delay + 160
+        };
+      });
+
+      return [...active, ...batch].slice(-MAX_EMOJI_BALLOONS);
+    });
   }
 
   function sendEmoji(emoji: string) {
     if (isStaticPreview) {
-      const message: ChatMessage = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        type: "emoji",
-        authorId: selfId,
-        author: nickname,
-        text: emoji,
-        videoTime: hasPlayerApi(playerRef.current) ? playerRef.current.getCurrentTime() : localTime,
-        createdAt: Date.now()
-      };
-      setMessages((current) => [...current, message].slice(-80));
       spawnEmojiBurst(emoji);
       return;
     }
@@ -1909,10 +2052,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     }
   }
 
-  function changeVideo(event: React.FormEvent) {
-    event.preventDefault();
-    const videoId = extractYouTubeId(nextVideoUrl);
-
+  function applyRoomVideoChange(videoId: string | null, youtubeUrl: string) {
     if (!videoId) {
       setVideoUrlError("유튜브 링크를 확인해 주세요.");
       return;
@@ -1927,7 +2067,13 @@ function RoomPage({ roomId }: { roomId: string }) {
       staticHasShownInitialCountdownRef.current = false;
       initialCountdownRequestedRef.current = false;
       lastKnownPlayerTimeRef.current = 0;
-      localStorage.setItem(`${STATIC_ROOM_PREFIX}${roomId}`, JSON.stringify({ videoId, updatedAt: now }));
+      const staticData = getStaticRoomData(roomId);
+      const currentHistory = normalizeVideoHistory(staticData?.videoHistory, roomRef.current?.videoId || videoId, now, nickname);
+      const nextHistory = compactVideoHistory([...currentHistory, makeVideoHistoryItem(videoId, now, nickname)]);
+      localStorage.setItem(
+        `${STATIC_ROOM_PREFIX}${roomId}`,
+        JSON.stringify({ videoId, updatedAt: now, videoHistory: nextHistory })
+      );
       setRoom((currentRoom) => {
         if (!currentRoom) return currentRoom;
         return {
@@ -1935,6 +2081,7 @@ function RoomPage({ roomId }: { roomId: string }) {
           videoId,
           playback: { state: "paused", time: 0, updatedAt: now },
           hasShownInitialCountdown: false,
+          videoHistory: nextHistory,
           participants: currentRoom.participants.map((participant) => ({
             ...participant,
             currentTime: 0,
@@ -1952,9 +2099,30 @@ function RoomPage({ roomId }: { roomId: string }) {
       return;
     }
 
-    socketRef.current?.emit("change-video", { roomId, participantId: selfId, youtubeUrl: nextVideoUrl });
+    socketRef.current?.emit("change-video", { roomId, participantId: selfId, youtubeUrl });
     setNextVideoUrl("");
     setVideoModalOpen(false);
+  }
+
+  function changeVideo(event: React.FormEvent) {
+    event.preventDefault();
+    applyRoomVideoChange(extractYouTubeId(nextVideoUrl), nextVideoUrl);
+  }
+
+  function playHistoryVideo(videoId: string) {
+    if (!canChangeVideo) {
+      setSystemNote("방장만 히스토리 영상을 재생할 수 있어요.");
+      window.setTimeout(() => setSystemNote(""), 2200);
+      return;
+    }
+
+    if (roomRef.current?.videoId === videoId) {
+      setHistoryModalOpen(false);
+      return;
+    }
+
+    applyRoomVideoChange(videoId, `https://www.youtube.com/watch?v=${videoId}`);
+    setHistoryModalOpen(false);
   }
 
   function keepVideoInView() {
@@ -1997,6 +2165,9 @@ function RoomPage({ roomId }: { roomId: string }) {
   const hiddenParticipantCount = Math.max(0, sortedParticipants.length - visibleParticipants.length);
   const mobileVisibleParticipants = sortedParticipants.slice(0, 4);
   const mobileHiddenParticipantCount = Math.max(0, sortedParticipants.length - mobileVisibleParticipants.length);
+  const videoHistory = useMemo(() => {
+    return visibleVideoHistory(room?.videoHistory || []);
+  }, [room?.videoHistory]);
   const mobileStatusLabel = isStaticPreview
     ? "미리보기"
     : localMode === "synced"
@@ -2004,6 +2175,50 @@ function RoomPage({ roomId }: { roomId: string }) {
       : localMode === "waiting"
         ? "방 시간 맞춤 중"
         : "개인 조작 중";
+  const roomHeaderActions: RoomHeaderAction[] = [
+    ...(localMode !== "synced"
+      ? [
+          {
+            key: "sync",
+            label: "현재 방 시간으로 맞추기",
+            icon: <ShieldCheck size={17} />,
+            onSelect: rejoinRoomTime
+          }
+        ]
+      : []),
+    {
+      key: "history",
+      label: "히스토리",
+      icon: <History size={17} />,
+      onSelect: () => setHistoryModalOpen(true)
+    },
+    ...(canChangeVideo
+      ? [
+          {
+            key: "change-video",
+            label: "영상 변경",
+            icon: <LinkIcon size={17} />,
+            onSelect: () => {
+              setVideoUrlError("");
+              setVideoModalOpen(true);
+            }
+          }
+        ]
+      : []),
+    {
+      key: "invite",
+      label: copied ? "복사됨" : "초대 링크",
+      icon: <Copy size={17} />,
+      onSelect: copyInvite
+    },
+    {
+      key: "chats",
+      label: "목록",
+      icon: <MessagesSquare size={17} />,
+      onSelect: () => navigate("/chats"),
+      tone: "exit"
+    }
+  ];
 
   if (!joined) {
     return (
@@ -2054,33 +2269,78 @@ function RoomPage({ roomId }: { roomId: string }) {
           <Clapperboard size={22} />
           WatchMe
         </a>
-        <div className="room-actions">
-          {localMode !== "synced" && (
-            <button className="ghost-button" onClick={rejoinRoomTime}>
-              <ShieldCheck size={17} />
-              현재 방 시간으로 맞추기
-            </button>
-          )}
-          {canChangeVideo && (
+        <div className={`room-actions liquid-room-actions ${roomMenuOpen ? "open" : ""}`}>
+          <svg className="room-action-goo" aria-hidden="true" focusable="false">
+            <defs>
+              <filter id="room-action-goo-filter">
+                <feGaussianBlur in="SourceGraphic" stdDeviation="9" result="blur" />
+                <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 18 -8" result="goo" />
+                <feComposite in="SourceGraphic" in2="goo" operator="atop" />
+              </filter>
+            </defs>
+          </svg>
+          <div className="liquid-action-layer liquid-action-bg" aria-hidden="true">
+            <span className="room-action-bubble main" />
+            {roomHeaderActions.map((action, index) => {
+              const actionStyle = {
+                "--offset": index + 1,
+                "--expanded-width": `${roomActionWidth(action.label)}px`
+              } as React.CSSProperties;
+              return (
+                <span
+                  className={`room-action-bubble ${action.tone === "exit" ? "is-exit" : ""} ${
+                    hoveredRoomAction === action.key ? "is-hovered" : ""
+                  }`}
+                  key={action.key}
+                  style={actionStyle}
+                >
+                  <span className="room-action-icon">{action.icon}</span>
+                  <span className="room-action-label">{action.label}</span>
+                </span>
+              );
+            })}
+          </div>
+          <div className="liquid-action-layer liquid-action-buttons">
             <button
-              className="ghost-button"
-              onClick={() => {
-                setVideoUrlError("");
-                setVideoModalOpen(true);
-              }}
+              className="room-action-bubble main"
+              type="button"
+              onClick={() => setRoomMenuOpen((open) => !open)}
+              aria-label={roomMenuOpen ? "헤더 메뉴 닫기" : "헤더 메뉴 열기"}
+              aria-expanded={roomMenuOpen}
             >
-              <LinkIcon size={17} />
-              영상 변경
+              {roomMenuOpen ? <X size={20} /> : <Menu size={20} />}
             </button>
-          )}
-          <button className="ghost-button" onClick={copyInvite}>
-            <Copy size={17} />
-            {copied ? "복사됨" : "초대 링크"}
-          </button>
-          <button className="ghost-button exit-button" onClick={() => navigate("/chats")} aria-label="채팅방 목록으로 나가기">
-            <MessagesSquare size={17} />
-            목록
-          </button>
+            {roomHeaderActions.map((action, index) => {
+              const actionStyle = {
+                "--offset": index + 1,
+                "--expanded-width": `${roomActionWidth(action.label)}px`
+              } as React.CSSProperties;
+              return (
+                <button
+                  className={`room-action-bubble ${action.tone === "exit" ? "is-exit" : ""} ${
+                    hoveredRoomAction === action.key ? "is-hovered" : ""
+                  }`}
+                  type="button"
+                  key={action.key}
+                  onClick={() => {
+                    void action.onSelect();
+                    setHoveredRoomAction(null);
+                    setRoomMenuOpen(false);
+                  }}
+                  onMouseEnter={() => setHoveredRoomAction(action.key)}
+                  onMouseLeave={() => setHoveredRoomAction(null)}
+                  onFocus={() => setHoveredRoomAction(action.key)}
+                  onBlur={() => setHoveredRoomAction(null)}
+                  style={actionStyle}
+                  tabIndex={roomMenuOpen ? 0 : -1}
+                  aria-label={action.label}
+                >
+                  <span className="room-action-icon">{action.icon}</span>
+                  <span className="room-action-label">{action.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </header>
 
@@ -2134,6 +2394,58 @@ function RoomPage({ roomId }: { roomId: string }) {
                 영상 변경
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {historyModalOpen && (
+        <div
+          className="modal-layer"
+          role="dialog"
+          aria-modal="true"
+          aria-label="시청 히스토리"
+          onClick={() => setHistoryModalOpen(false)}
+        >
+          <div className="modal-card glass-panel history-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-handle" aria-hidden="true" />
+            <button className="modal-close" type="button" aria-label="닫기" onClick={() => setHistoryModalOpen(false)}>
+              <X size={17} />
+            </button>
+            <div className="panel-heading">
+              <p>히스토리</p>
+              <h2>이 방에서 봤던 영상</h2>
+            </div>
+            <div className="video-history-list">
+              {videoHistory.length === 0 ? (
+                <p className="empty-state">아직 기록된 영상이 없습니다.</p>
+              ) : (
+                videoHistory.map((item) => {
+                  const thumb = videoThumbnail(item.videoId);
+                  const isCurrent = item.videoId === room?.videoId;
+                  const title = item.title || knownVideoTitle(item.videoId) || "제목 확인 중";
+                  return (
+                    <button
+                      className={`video-history-item ${isCurrent ? "is-current" : "is-past"}`}
+                      type="button"
+                      key={item.videoId}
+                      onClick={() => playHistoryVideo(item.videoId)}
+                      disabled={!canChangeVideo || isCurrent}
+                      aria-current={isCurrent ? "true" : undefined}
+                    >
+                      <div className="history-thumb">{thumb && <img src={thumb} alt="" loading="lazy" />}</div>
+                      <div className="history-copy">
+                        <div className="history-title-row">
+                          <strong>{title}</strong>
+                          {isCurrent && <span>현재 영상</span>}
+                        </div>
+                        <p className="history-watch-date">최근 시청일 · {formatRecentWatchedAt(item.addedAt)}</p>
+                        {item.addedBy && <p className="history-added-by">{item.addedBy}님 추가</p>}
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       )}
