@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { io, Socket } from "socket.io-client";
 import {
   ChevronRight,
-  CirclePause,
   Clapperboard,
   Copy,
   Flame,
+  History,
   Home,
   Link as LinkIcon,
+  LogIn,
   MessageCircle,
   MessagesSquare,
   Play,
@@ -73,11 +74,6 @@ type CountdownCommand = {
   playAt: number;
 };
 
-type SlowPrompt = {
-  nickname: string;
-  seconds: number;
-};
-
 type CursorChatEvent = {
   participantId: string;
   nickname: string;
@@ -94,6 +90,18 @@ type TapPingEvent = {
   x: number;
   y: number;
 };
+
+type EmojiBalloon = {
+  id: string;
+  emoji: string;
+  x: number;
+  size: number;
+  duration: number;
+  delay: number;
+  drift: number;
+};
+
+const QUICK_EMOJIS = ["😂", "😱", "👏", "❤️", "😮", "🔥"];
 
 type JoinedRoomEntry = {
   roomId: string;
@@ -124,9 +132,11 @@ type RoomSummary = {
 const STORAGE_NICKNAME = "watchme:nickname";
 const STORAGE_PARTICIPANT = "watchme:participant";
 const STORAGE_JOINED_ROOMS = "watchme:joined-rooms";
+const STORAGE_RESUME_POINTS = "watchme:resume-points";
 const STATIC_ROOM_PREFIX = "watchme:static-room:";
-const DRIFT_THRESHOLD = 3;
 const SEEK_COMMAND_THRESHOLD = 1.5;
+const RESUME_MIN_SECONDS = 10;
+const RESUME_MAX_ENTRIES = 50;
 const ROOM_VISUAL_HEIGHT_VAR = "--room-visual-height";
 const ROOM_KEYBOARD_INSET_VAR = "--room-keyboard-inset";
 const ROOM_VIEWPORT_OFFSET_VAR = "--room-viewport-offset";
@@ -181,6 +191,43 @@ function saveJoinedRooms(entries: JoinedRoomEntry[]) {
 function rememberJoinedRoom(entry: JoinedRoomEntry) {
   const rest = loadJoinedRooms().filter((item) => item.roomId !== entry.roomId);
   saveJoinedRooms([entry, ...rest]);
+}
+
+type ResumePoint = { time: number; savedAt: number };
+
+function loadResumePoints(): Record<string, ResumePoint> {
+  try {
+    const raw = localStorage.getItem(STORAGE_RESUME_POINTS);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, ResumePoint>;
+  } catch {
+    return {};
+  }
+}
+
+function getResumePoint(videoId: string): ResumePoint | null {
+  const point = loadResumePoints()[videoId];
+  if (!point || !Number.isFinite(point.time) || point.time < RESUME_MIN_SECONDS) return null;
+  return point;
+}
+
+function saveResumePoint(videoId: string, time: number) {
+  if (!videoId || !Number.isFinite(time) || time < RESUME_MIN_SECONDS) return;
+  const points = loadResumePoints();
+  points[videoId] = { time: Math.floor(time), savedAt: Date.now() };
+  const trimmed = Object.entries(points)
+    .sort((a, b) => b[1].savedAt - a[1].savedAt)
+    .slice(0, RESUME_MAX_ENTRIES);
+  localStorage.setItem(STORAGE_RESUME_POINTS, JSON.stringify(Object.fromEntries(trimmed)));
+}
+
+function clearResumePoint(videoId: string) {
+  const points = loadResumePoints();
+  if (!(videoId in points)) return;
+  delete points[videoId];
+  localStorage.setItem(STORAGE_RESUME_POINTS, JSON.stringify(points));
 }
 
 function joinedRoomPath(entry: JoinedRoomEntry) {
@@ -288,7 +335,7 @@ async function createRoomRequest(youtubeUrl: string, nickname: string) {
   const response = await fetch("/api/rooms", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ youtubeUrl, nickname })
+    body: JSON.stringify({ youtubeUrl, nickname, participantId: getParticipantId() })
   });
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) throw new Error("static-preview");
@@ -437,6 +484,8 @@ const NAV_ITEMS = [
 ] as const;
 
 function AppShell({ active, children }: { active: "home" | "chats"; children: React.ReactNode }) {
+  const [loginOpen, setLoginOpen] = useState(false);
+
   function go(event: React.MouseEvent, to: string) {
     event.preventDefault();
     navigate(to);
@@ -470,7 +519,10 @@ function AppShell({ active, children }: { active: "home" | "chats"; children: Re
             </a>
           ))}
         </nav>
-        <p className="side-foot">같은 영상, 같은 순간</p>
+        <button className="side-login-button" type="button" onClick={() => setLoginOpen(true)}>
+          <LogIn size={18} />
+          로그인
+        </button>
       </aside>
 
       <div className="app-content">{children}</div>
@@ -489,6 +541,122 @@ function AppShell({ active, children }: { active: "home" | "chats"; children: Re
           </a>
         ))}
       </nav>
+
+      {loginOpen && <LoginModal onClose={() => setLoginOpen(false)} />}
+    </div>
+  );
+}
+
+const SOCIAL_PROVIDERS = [
+  { key: "kakao", name: "카카오", label: "카카오로 계속하기" },
+  { key: "naver", name: "네이버", label: "네이버로 계속하기" },
+  { key: "google", name: "Google", label: "Google로 계속하기" },
+  { key: "apple", name: "Apple", label: "Apple로 계속하기" }
+] as const;
+
+function SocialIcon({ provider }: { provider: (typeof SOCIAL_PROVIDERS)[number]["key"] }) {
+  if (provider === "kakao") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M12 0C5.373 0 0 4.226 0 9.438c0 3.368 2.245 6.327 5.62 7.999-.247.92-.797 2.973-.912 3.434-.142.571.21.564.441.41.182-.121 2.892-1.964 4.06-2.757.585.087 1.182.131 1.791.131 6.627 0 12-4.226 12-9.438C24 4.226 18.627 0 12 0z"
+        />
+      </svg>
+    );
+  }
+  if (provider === "naver") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="currentColor" d="M16.273 12.845 7.376 0H0v24h7.726V11.156L16.624 24H24V0h-7.727v12.845z" />
+      </svg>
+    );
+  }
+  if (provider === "google") {
+    return (
+      <svg viewBox="0 0 18 18" aria-hidden="true">
+        <path
+          fill="#4285F4"
+          d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"
+        />
+        <path
+          fill="#34A853"
+          d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"
+        />
+        <path
+          fill="#FBBC05"
+          d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"
+        />
+        <path
+          fill="#EA4335"
+          d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"
+      />
+    </svg>
+  );
+}
+
+function LoginModal({ onClose }: { onClose: () => void }) {
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  return (
+    <div className="modal-layer" role="dialog" aria-modal="true" aria-label="로그인" onClick={onClose}>
+      <div className="modal-card glass-panel login-card" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-handle" aria-hidden="true" />
+        <button className="modal-close" type="button" aria-label="닫기" onClick={onClose}>
+          <X size={17} />
+        </button>
+        <div className="panel-heading">
+          <p>로그인</p>
+          <h2>간편하게 시작해 보세요</h2>
+        </div>
+        <div className="social-login-list">
+          {SOCIAL_PROVIDERS.map((provider) => (
+            <button
+              key={provider.key}
+              className={`social-button ${provider.key}`}
+              type="button"
+              onClick={() => setNotice(`${provider.name} 간편로그인은 연동 준비 중이에요.`)}
+            >
+              <span className="social-icon">
+                <SocialIcon provider={provider.key} />
+              </span>
+              {provider.label}
+            </button>
+          ))}
+        </div>
+        {notice ? (
+          <p className="login-notice" role="status">
+            {notice}
+          </p>
+        ) : (
+          <p className="login-terms">로그인하면 참여한 방을 어느 기기에서나 이어볼 수 있어요.</p>
+        )}
+      </div>
     </div>
   );
 }
@@ -682,7 +850,7 @@ function ChatsPage() {
   const [createOpen, setCreateOpen] = useState(false);
 
   return (
-    <main className="chats-page">
+    <main className="page chats-page">
       <header className="page-head">
         <div>
           <h1>채팅방</h1>
@@ -799,7 +967,7 @@ function HomePage() {
   }
 
   return (
-    <main className="home-page">
+    <main className="page home-page">
       <section className="home-hero glass-panel" aria-label="WatchMe 소개">
         <div className="hero-copy">
           <p className="eyebrow">same video, same moment</p>
@@ -916,26 +1084,27 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [localMode, setLocalMode] = useState<LocalMode>("synced");
   const [localTime, setLocalTime] = useState(0);
   const [playerReady, setPlayerReady] = useState(false);
-  const [slowPrompt, setSlowPrompt] = useState<SlowPrompt | null>(null);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [chatFocused, setChatFocused] = useState(false);
   const [nextVideoUrl, setNextVideoUrl] = useState("");
   const [videoUrlError, setVideoUrlError] = useState("");
-  const [mobileVideoFormOpen, setMobileVideoFormOpen] = useState(false);
+  const [videoModalOpen, setVideoModalOpen] = useState(false);
   const [initialPlaybackPending, setInitialPlaybackPending] = useState(false);
   const [cursorChat, setCursorChat] = useState<{ x: number; y: number; text: string } | null>(null);
   const [remoteBubbles, setRemoteBubbles] = useState<Record<string, CursorChatEvent>>({});
   const [pings, setPings] = useState<TapPingEvent[]>([]);
   const [pingMode, setPingMode] = useState(false);
+  const [resumePrompt, setResumePrompt] = useState<{ videoId: string; time: number } | null>(null);
+  const [emojiBursts, setEmojiBursts] = useState<EmojiBalloon[]>([]);
 
   const socketRef = useRef<Socket | null>(null);
   const playerRef = useRef<YouTubePlayer | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const participantIdRef = useRef(getParticipantId());
   const applyingRemoteRef = useRef(false);
   const suppressCommandRef = useRef(false);
-  const waitHoldTimeRef = useRef<number | null>(null);
   const roomRef = useRef<RoomState | null>(null);
   const localModeRef = useRef<LocalMode>("synced");
   const countdownActiveRef = useRef(false);
@@ -947,7 +1116,6 @@ function RoomPage({ roomId }: { roomId: string }) {
   const initialCountdownRequestedRef = useRef(false);
   const lastKnownPlayerTimeRef = useRef(0);
   const currentVideoIdRef = useRef<string | null>(null);
-  const lastBlockedNoticeRef = useRef(0);
   const playerWrapRef = useRef<HTMLDivElement | null>(null);
   const lastMouseRef = useRef<{ x: number; y: number } | null>(null);
   const cursorChatRef = useRef<{ x: number; y: number; text: string } | null>(null);
@@ -956,14 +1124,15 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   const selfId = participantIdRef.current;
   const self = room?.participants.find((participant) => participant.id === selfId) || null;
-  const canControl = Boolean(self?.canControl && localMode !== "freeplay");
-  const canChangeVideo = Boolean((self?.isHost || self?.canControl) && localMode !== "freeplay");
+  const canControl = Boolean(self?.isHost);
+  const canChangeVideo = Boolean(self?.isHost);
   const inviteUrl = isStaticPreview ? window.location.href : `${window.location.origin}/room/${roomId}`;
   const shouldShowInitialPlayOverlay = Boolean(
     canControl &&
       playerReady &&
       countdown === null &&
       !initialPlaybackPending &&
+      !resumePrompt &&
       room?.playback.state === "paused" &&
       !hasInitialCountdownBeenShown()
   );
@@ -1016,10 +1185,19 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, []);
 
   useEffect(() => {
-    if (!canChangeVideo && mobileVideoFormOpen) {
-      setMobileVideoFormOpen(false);
+    if (!canChangeVideo && videoModalOpen) {
+      setVideoModalOpen(false);
     }
-  }, [canChangeVideo, mobileVideoFormOpen]);
+  }, [canChangeVideo, videoModalOpen]);
+
+  useEffect(() => {
+    if (!videoModalOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setVideoModalOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [videoModalOpen]);
 
   useEffect(() => {
     roomRef.current = room;
@@ -1044,8 +1222,9 @@ function RoomPage({ roomId }: { roomId: string }) {
 
     if (!previousVideoId || previousVideoId === room.videoId) return;
 
+    saveResumePoint(previousVideoId, lastKnownPlayerTimeRef.current);
+    setResumePrompt(null);
     clearCountdown();
-    setSlowPrompt(null);
     setLocalMode("synced");
     localModeRef.current = "synced";
     staticHasShownInitialCountdownRef.current = false;
@@ -1057,6 +1236,18 @@ function RoomPage({ roomId }: { roomId: string }) {
   useEffect(() => {
     localModeRef.current = localMode;
   }, [localMode]);
+
+  useEffect(() => {
+    if (!playerReady || !canControl || !room?.videoId) return;
+    if (hasInitialCountdownBeenShown()) return;
+
+    const playback = roomRef.current?.playback;
+    if (!playback || playback.state === "playing" || getPlaybackTime(playback) > 3) return;
+
+    const point = getResumePoint(room.videoId);
+    if (!point) return;
+    setResumePrompt({ videoId: room.videoId, time: point.time });
+  }, [playerReady, canControl, room?.videoId]);
 
   const joinedVideoId = room?.videoId ?? null;
   useEffect(() => {
@@ -1155,6 +1346,21 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, [messages.length]);
 
   useEffect(() => {
+    const textarea = chatInputRef.current;
+    if (!textarea) return;
+    const style = window.getComputedStyle(textarea);
+    const lineHeight = parseFloat(style.lineHeight) || 22;
+    const maxHeight =
+      lineHeight * 3 +
+      parseFloat(style.paddingTop) +
+      parseFloat(style.paddingBottom) +
+      parseFloat(style.borderTopWidth) +
+      parseFloat(style.borderBottomWidth);
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight + 2, Math.round(maxHeight))}px`;
+  }, [messageText]);
+
+  useEffect(() => {
     if (!joined || !nickname) return;
     if (isStaticPreview && staticVideoId) {
       const nextRoom = makeStaticRoomState(roomId, staticVideoId, selfId, nickname);
@@ -1190,12 +1396,12 @@ function RoomPage({ roomId }: { roomId: string }) {
 
     socket.on("remote-command", (command: RemoteCommand) => {
       if (command.sourceId === selfId) return;
-      if (localModeRef.current !== "synced") return;
+      forceSyncedByHostCommand();
       applyRemoteCommand(command);
     });
 
     socket.on("play-countdown", (command: CountdownCommand) => {
-      if (localModeRef.current !== "synced") return;
+      forceSyncedByHostCommand();
       startCountdown(command);
     });
 
@@ -1217,6 +1423,10 @@ function RoomPage({ roomId }: { roomId: string }) {
       window.setTimeout(() => {
         setPings((current) => current.filter((ping) => ping.id !== event.id));
       }, 1800);
+    });
+
+    socket.on("emoji-burst", (message: ChatMessage) => {
+      spawnEmojiBurst(message.text);
     });
 
     return () => {
@@ -1290,7 +1500,6 @@ function RoomPage({ roomId }: { roomId: string }) {
       setLocalTime(currentTime);
       lastKnownPlayerTimeRef.current = currentTime;
       syncRoomViewportVars();
-      enforceRoomPlayback();
       socketRef.current?.emit("heartbeat", {
         roomId,
         participantId: selfId,
@@ -1302,52 +1511,6 @@ function RoomPage({ roomId }: { roomId: string }) {
 
     return () => window.clearInterval(interval);
   }, [joined, localTime, roomId, selfId]);
-
-  useEffect(() => {
-    if (!room || !playerReady || localMode !== "synced") return;
-    if (countdownActiveRef.current) return;
-    const player = playerRef.current;
-    if (!hasPlayerApi(player) || player.getPlayerState() !== window.YT?.PlayerState.PLAYING) return;
-
-    const delayed = room.participants
-      .filter((participant) => participant.id !== selfId && participant.localMode !== "freeplay")
-      .map((participant) => ({
-        participant,
-        gap: localTime - participant.currentTime
-      }))
-      .filter(({ gap }) => gap >= DRIFT_THRESHOLD)
-      .sort((a, b) => b.gap - a.gap)[0];
-
-    if (!delayed || slowPrompt) return;
-
-    suppressCommandRef.current = true;
-    player.pauseVideo();
-    window.setTimeout(() => {
-      suppressCommandRef.current = false;
-    }, 300);
-    waitHoldTimeRef.current = localTime;
-    updateLocalMode("waiting");
-    setSlowPrompt({
-      nickname: delayed.participant.nickname,
-      seconds: Math.floor(delayed.gap)
-    });
-  }, [localTime, localMode, playerReady, room, selfId, slowPrompt]);
-
-  useEffect(() => {
-    if (!room || localMode !== "waiting" || waitHoldTimeRef.current === null) return;
-    const holdTime = waitHoldTimeRef.current;
-    const waitingFor = room.participants.filter(
-      (participant) => participant.id !== selfId && participant.localMode !== "freeplay"
-    );
-    if (!waitingFor.length) return;
-    const caughtUp = waitingFor.every((participant) => participant.currentTime >= holdTime - 1.2);
-    if (!caughtUp) return;
-
-    setSlowPrompt(null);
-    waitHoldTimeRef.current = null;
-    updateLocalMode("synced");
-    if (hasPlayerApi(playerRef.current)) playerRef.current.playVideo();
-  }, [localMode, room, selfId]);
 
   function handleJoin(event: React.FormEvent) {
     event.preventDefault();
@@ -1376,16 +1539,23 @@ function RoomPage({ roomId }: { roomId: string }) {
       }
     }
     if (applyingRemoteRef.current || suppressCommandRef.current) return;
+    const player = playerRef.current;
+    const time = hasPlayerApi(player) ? player.getCurrentTime() : 0;
+
     if (!canControl) {
-      if (!isStaticPreview && localModeRef.current === "synced") {
-        showControlBlockedNotice();
-        enforceRoomPlayback();
+      if (
+        !isStaticPreview &&
+        localModeRef.current !== "freeplay" &&
+        (data === window.YT.PlayerState.PLAYING ||
+          data === window.YT.PlayerState.PAUSED ||
+          data === window.YT.PlayerState.CUED)
+      ) {
+        updateLocalMode("freeplay");
       }
+      lastKnownPlayerTimeRef.current = time;
       return;
     }
 
-    const player = playerRef.current;
-    const time = hasPlayerApi(player) ? player.getCurrentTime() : 0;
     if (data === window.YT.PlayerState.PLAYING) {
       if (isSeekLikePlaybackStart(time)) {
         handleSeekCommand(time);
@@ -1457,6 +1627,20 @@ function RoomPage({ roomId }: { roomId: string }) {
     return initialCountdownRequestedRef.current || Boolean(room?.hasShownInitialCountdown || roomRef.current?.hasShownInitialCountdown);
   }
 
+  function resumeFromSavedPoint() {
+    if (!resumePrompt) return;
+    const { videoId, time } = resumePrompt;
+    clearResumePoint(videoId);
+    setResumePrompt(null);
+    requestInitialPlaybackCountdown(time);
+  }
+
+  function dismissResumePrompt() {
+    if (!resumePrompt) return;
+    clearResumePoint(resumePrompt.videoId);
+    setResumePrompt(null);
+  }
+
   function isSeekLikePlaybackStart(time: number) {
     const playback = roomRef.current?.playback;
     const roomTime = playback ? getPlaybackTime(playback) : lastKnownPlayerTimeRef.current;
@@ -1500,6 +1684,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   }
 
   function applyRemoteCommand(command: RemoteCommand) {
+    setResumePrompt(null);
     clearCountdown();
     const player = playerRef.current;
     if (!hasPlayerApi(player)) return;
@@ -1529,6 +1714,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   }
 
   function startCountdown(command: CountdownCommand, playLocally = false, onComplete?: () => void) {
+    setResumePrompt(null);
     clearCountdown();
     countdownActiveRef.current = true;
     const player = playerRef.current;
@@ -1561,48 +1747,14 @@ function RoomPage({ roomId }: { roomId: string }) {
     }, Math.max(0, command.playAt - Date.now()));
   }
 
-  function enforceRoomPlayback() {
-    const player = playerRef.current;
-    const currentRoom = roomRef.current;
-    if (
-      !hasPlayerApi(player) ||
-      !currentRoom ||
-      isStaticPreview ||
-      localModeRef.current !== "synced" ||
-      countdownActiveRef.current
-    ) {
-      return;
+  function forceSyncedByHostCommand() {
+    if (localModeRef.current === "synced") return;
+
+    setLocalMode("synced");
+    localModeRef.current = "synced";
+    if (!isStaticPreview) {
+      socketRef.current?.emit("sync-choice", { roomId, participantId: selfId, mode: "synced" });
     }
-
-    const currentSelf = currentRoom.participants.find((participant) => participant.id === selfId);
-    if (!currentSelf || currentSelf.canControl) return;
-
-    const roomTime = getPlaybackTime(currentRoom.playback);
-    const playerTime = player.getCurrentTime();
-    const stateCode = player.getPlayerState();
-    const shouldPlay = currentRoom.playback.state === "playing";
-    const isPlaying = stateCode === window.YT?.PlayerState.PLAYING;
-    const isPaused = stateCode === window.YT?.PlayerState.PAUSED;
-    const needsSeek = Math.abs(playerTime - roomTime) > 1.1;
-    const needsStateFix = shouldPlay ? !isPlaying : !isPaused;
-
-    if (!needsSeek && !needsStateFix) return;
-
-    applyingRemoteRef.current = true;
-    if (needsSeek) player.seekTo(roomTime, true);
-    if (shouldPlay) player.playVideo();
-    if (!shouldPlay) player.pauseVideo();
-    window.setTimeout(() => {
-      applyingRemoteRef.current = false;
-    }, 400);
-  }
-
-  function showControlBlockedNotice() {
-    const now = Date.now();
-    if (now - lastBlockedNoticeRef.current < 2200) return;
-    lastBlockedNoticeRef.current = now;
-    setSystemNote("방장만 영상을 조작할 수 있어요.");
-    window.setTimeout(() => setSystemNote(""), 2200);
   }
 
   function updateLocalMode(mode: LocalMode) {
@@ -1611,18 +1763,6 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (!isStaticPreview) {
       socketRef.current?.emit("sync-choice", { roomId, participantId: selfId, mode });
     }
-  }
-
-  function chooseWait() {
-    setSlowPrompt(null);
-    updateLocalMode("waiting");
-  }
-
-  function chooseContinue() {
-    setSlowPrompt(null);
-    waitHoldTimeRef.current = null;
-    updateLocalMode("freeplay");
-    if (hasPlayerApi(playerRef.current)) playerRef.current.playVideo();
   }
 
   function rejoinRoomTime() {
@@ -1637,11 +1777,10 @@ function RoomPage({ roomId }: { roomId: string }) {
       applyingRemoteRef.current = false;
     }, 400);
     updateLocalMode("synced");
-    setSlowPrompt(null);
   }
 
-  function sendMessage(event: React.FormEvent) {
-    event.preventDefault();
+  function sendMessage(event?: React.FormEvent) {
+    event?.preventDefault();
     const text = messageText.trim();
     if (!text) return;
     if (isStaticPreview) {
@@ -1667,6 +1806,24 @@ function RoomPage({ roomId }: { roomId: string }) {
     setMessageText("");
   }
 
+  function spawnEmojiBurst(emoji: string) {
+    const count = 5 + Math.floor(Math.random() * 3);
+    const batch: EmojiBalloon[] = Array.from({ length: count }, (_, index) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}-${index}`,
+      emoji,
+      x: 8 + Math.random() * 84,
+      size: 18 + Math.random() * 14,
+      duration: 1800 + Math.random() * 1200,
+      delay: index * 90 + Math.random() * 120,
+      drift: -36 + Math.random() * 72
+    }));
+    setEmojiBursts((current) => [...current, ...batch].slice(-60));
+    const maxLife = Math.max(...batch.map((balloon) => balloon.duration + balloon.delay)) + 200;
+    window.setTimeout(() => {
+      setEmojiBursts((current) => current.filter((balloon) => !batch.some((item) => item.id === balloon.id)));
+    }, maxLife);
+  }
+
   function sendEmoji(emoji: string) {
     if (isStaticPreview) {
       const message: ChatMessage = {
@@ -1679,6 +1836,7 @@ function RoomPage({ roomId }: { roomId: string }) {
         createdAt: Date.now()
       };
       setMessages((current) => [...current, message].slice(-80));
+      spawnEmojiBurst(emoji);
       return;
     }
     socketRef.current?.emit("emoji-reaction", {
@@ -1762,7 +1920,6 @@ function RoomPage({ roomId }: { roomId: string }) {
 
     setVideoUrlError("");
     clearCountdown();
-    setSlowPrompt(null);
     updateLocalMode("synced");
 
     if (isStaticPreview) {
@@ -1791,13 +1948,13 @@ function RoomPage({ roomId }: { roomId: string }) {
       setSystemNote("영상이 변경됐어요.");
       window.setTimeout(() => setSystemNote(""), 2200);
       setNextVideoUrl("");
-      setMobileVideoFormOpen(false);
+      setVideoModalOpen(false);
       return;
     }
 
     socketRef.current?.emit("change-video", { roomId, participantId: selfId, youtubeUrl: nextVideoUrl });
     setNextVideoUrl("");
-    setMobileVideoFormOpen(false);
+    setVideoModalOpen(false);
   }
 
   function keepVideoInView() {
@@ -1845,8 +2002,8 @@ function RoomPage({ roomId }: { roomId: string }) {
     : localMode === "synced"
       ? "같이 보는 중"
       : localMode === "waiting"
-        ? "잠깐 쉬는 중"
-        : "먼저 보는 중";
+        ? "방 시간 맞춤 중"
+        : "개인 조작 중";
 
   if (!joined) {
     return (
@@ -1904,6 +2061,18 @@ function RoomPage({ roomId }: { roomId: string }) {
               현재 방 시간으로 맞추기
             </button>
           )}
+          {canChangeVideo && (
+            <button
+              className="ghost-button"
+              onClick={() => {
+                setVideoUrlError("");
+                setVideoModalOpen(true);
+              }}
+            >
+              <LinkIcon size={17} />
+              영상 변경
+            </button>
+          )}
           <button className="ghost-button" onClick={copyInvite}>
             <Copy size={17} />
             {copied ? "복사됨" : "초대 링크"}
@@ -1925,6 +2094,50 @@ function RoomPage({ roomId }: { roomId: string }) {
         </div>
       )}
 
+      {videoModalOpen && canChangeVideo && (
+        <div
+          className="modal-layer"
+          role="dialog"
+          aria-modal="true"
+          aria-label="영상 변경"
+          onClick={() => setVideoModalOpen(false)}
+        >
+          <div className="modal-card glass-panel" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-handle" aria-hidden="true" />
+            <button className="modal-close" type="button" aria-label="닫기" onClick={() => setVideoModalOpen(false)}>
+              <X size={17} />
+            </button>
+            <div className="panel-heading">
+              <p>영상 변경</p>
+              <h2>새 유튜브 링크를 붙여 주세요</h2>
+            </div>
+            <form className="room-form" onSubmit={changeVideo}>
+              <label>
+                <span>유튜브 링크</span>
+                <div className="input-wrap">
+                  <LinkIcon size={18} />
+                  <input
+                    value={nextVideoUrl}
+                    onChange={(event) => {
+                      setNextVideoUrl(event.target.value);
+                      if (videoUrlError) setVideoUrlError("");
+                    }}
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    required
+                    autoFocus
+                  />
+                </div>
+              </label>
+              {videoUrlError && <p className="error-text">{videoUrlError}</p>}
+              <button className="primary-button" type="submit" disabled={!nextVideoUrl.trim()}>
+                <Play size={18} />
+                영상 변경
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       <section className="watch-layout">
         <div className="watch-main">
           <div className="player-frame" ref={playerWrapRef}>
@@ -1942,6 +2155,27 @@ function RoomPage({ roomId }: { roomId: string }) {
                   같이 재생 시작
                 </span>
               </button>
+            )}
+
+            {resumePrompt && (
+              <div className="resume-overlay" role="dialog" aria-label="이어보기 안내">
+                <div className="resume-card">
+                  <p className="resume-title">
+                    <History size={17} />
+                    <strong>{formatTime(resumePrompt.time)}</strong>에서 중단한 기록이 있습니다
+                  </p>
+                  <p className="resume-question">이어 보시겠습니까?</p>
+                  <div className="resume-actions">
+                    <button className="primary-button" type="button" onClick={resumeFromSavedPoint}>
+                      <Play size={17} />
+                      이어 보기
+                    </button>
+                    <button className="ghost-button" type="button" onClick={dismissResumePrompt}>
+                      처음부터
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
 
             {Object.values(remoteBubbles).map((bubble) => (
@@ -2059,51 +2293,13 @@ function RoomPage({ roomId }: { roomId: string }) {
               </span>
               {isStaticPreview && "프론트 미리보기"}
               {!isStaticPreview && localMode === "synced" && "같이 보는 중"}
-              {!isStaticPreview && localMode === "waiting" && "잠깐 쉬는 중"}
-              {!isStaticPreview && localMode === "freeplay" && "먼저 보는 중"}
+              {!isStaticPreview && localMode === "waiting" && "방 시간 맞춤 중"}
+              {!isStaticPreview && localMode === "freeplay" && "개인 조작 중"}
             </div>
           </div>
-          {canChangeVideo && (
-            <form className="video-change-form" onSubmit={changeVideo}>
-              <div className="video-change-input">
-                <LinkIcon size={17} />
-                <input
-                  value={nextVideoUrl}
-                  onChange={(event) => {
-                    setNextVideoUrl(event.target.value);
-                    if (videoUrlError) setVideoUrlError("");
-                  }}
-                  placeholder="새 유튜브 링크"
-                  aria-label="새 유튜브 링크"
-                />
-              </div>
-              <button type="submit" disabled={!nextVideoUrl.trim()}>
-                변경
-              </button>
-              {videoUrlError && <p>{videoUrlError}</p>}
-            </form>
-          )}
         </div>
 
         <aside className="watch-sidebar">
-          {slowPrompt && (
-            <section className="pause-prompt" aria-live="polite">
-              <div className="prompt-icon">
-                <CirclePause size={24} />
-              </div>
-              <div>
-                <p>잠깐 쉬는 타임, 이어보시겠어요?</p>
-                <span>
-                  {slowPrompt.nickname}님과 약 {slowPrompt.seconds}초 차이가 나고 있어요.
-                </span>
-              </div>
-              <div className="prompt-actions">
-                <button onClick={chooseWait}>기다릴게요</button>
-                <button onClick={chooseContinue}>이어보기</button>
-              </div>
-            </section>
-          )}
-
           <section className="sidebar-section chat-section">
             <div className="mobile-chat-handle" aria-hidden="true" />
             <div className="mobile-chat-header">
@@ -2144,12 +2340,13 @@ function RoomPage({ roomId }: { roomId: string }) {
                 </button>
                 {canChangeVideo && (
                   <button
-                    className={`mobile-icon-button ${mobileVideoFormOpen ? "active" : ""}`}
+                    className="mobile-icon-button"
                     type="button"
-                    onClick={() => setMobileVideoFormOpen((current) => !current)}
-                    aria-controls="mobile-video-change-panel"
-                    aria-expanded={mobileVideoFormOpen}
-                    aria-label={mobileVideoFormOpen ? "영상 변경 닫기" : "영상 변경 열기"}
+                    onClick={() => {
+                      setVideoUrlError("");
+                      setVideoModalOpen(true);
+                    }}
+                    aria-label="영상 변경"
                   >
                     <LinkIcon size={17} />
                   </button>
@@ -2164,26 +2361,6 @@ function RoomPage({ roomId }: { roomId: string }) {
                 </button>
               </div>
             </div>
-            {canChangeVideo && mobileVideoFormOpen && (
-              <form className="mobile-video-change-panel" id="mobile-video-change-panel" onSubmit={changeVideo}>
-                <div className="video-change-input">
-                  <LinkIcon size={16} />
-                  <input
-                    value={nextVideoUrl}
-                    onChange={(event) => {
-                      setNextVideoUrl(event.target.value);
-                      if (videoUrlError) setVideoUrlError("");
-                    }}
-                    placeholder="새 유튜브 링크"
-                    aria-label="새 유튜브 링크"
-                  />
-                </div>
-                <button type="submit" disabled={!nextVideoUrl.trim()}>
-                  변경
-                </button>
-                {videoUrlError && <p>{videoUrlError}</p>}
-              </form>
-            )}
             <div className="section-title">
               <MessageCircle size={18} />
               <h2>실시간 채팅</h2>
@@ -2207,7 +2384,7 @@ function RoomPage({ roomId }: { roomId: string }) {
             </div>
             <div className="chat-composer">
               <div className="emoji-row" aria-label="빠른 반응">
-                {["ㅋㅋ", "헉", "👏", "❤️", "😮", "🔥"].map((emoji) => (
+                {QUICK_EMOJIS.map((emoji) => (
                   <button key={emoji} onClick={() => sendEmoji(emoji)}>
                     {emoji}
                   </button>
@@ -2218,9 +2395,17 @@ function RoomPage({ roomId }: { roomId: string }) {
                   {nickname ? nickname.slice(0, 1) : <UserRound size={18} />}
                 </span>
                 <div className="chat-input-wrap">
-                  <input
+                  <textarea
+                    ref={chatInputRef}
                     value={messageText}
+                    rows={1}
                     onChange={(event) => setMessageText(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" || event.shiftKey) return;
+                      if (event.nativeEvent.isComposing) return;
+                      event.preventDefault();
+                      sendMessage();
+                    }}
                     onPointerDown={keepVideoInView}
                     onFocus={keepVideoInView}
                     onBlur={releaseChatFocus}
@@ -2242,6 +2427,26 @@ function RoomPage({ roomId }: { roomId: string }) {
                   <Send size={18} />
                 </button>
               </form>
+            </div>
+
+            <div className="emoji-burst-layer" aria-hidden="true">
+              {emojiBursts.map((balloon) => (
+                <span
+                  className="emoji-balloon"
+                  key={balloon.id}
+                  style={
+                    {
+                      left: `${balloon.x}%`,
+                      fontSize: `${balloon.size}px`,
+                      animationDuration: `${balloon.duration}ms`,
+                      animationDelay: `${balloon.delay}ms`,
+                      "--drift": `${balloon.drift}px`
+                    } as React.CSSProperties
+                  }
+                >
+                  {balloon.emoji}
+                </span>
+              ))}
             </div>
           </section>
         </aside>

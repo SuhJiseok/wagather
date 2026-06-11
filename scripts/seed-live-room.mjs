@@ -8,11 +8,12 @@ import { io } from "socket.io-client";
 
 const base = process.argv[2] || "http://localhost:3000";
 const videoUrl = "https://www.youtube.com/watch?v=9bZkp7q19f0";
+const participantId = "led-test-host";
 
 const response = await fetch(`${base}/api/rooms`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ youtubeUrl: videoUrl, nickname: "LED테스트" })
+  body: JSON.stringify({ youtubeUrl: videoUrl, nickname: "LED테스트", participantId })
 });
 if (!response.ok) {
   console.error("방 생성 실패:", response.status, await response.text());
@@ -25,9 +26,9 @@ await new Promise((resolve, reject) => {
   socket.on("connect", resolve);
   socket.on("connect_error", reject);
 });
-socket.emit("join-room", { roomId, participantId: "led-test-host", nickname: "LED테스트" });
+socket.emit("join-room", { roomId, participantId, nickname: "LED테스트" });
 await new Promise((resolve) => setTimeout(resolve, 500));
-socket.emit("playback-command", { roomId, participantId: "led-test-host", action: "play", time: 0 });
+socket.emit("playback-command", { roomId, participantId, action: "play", time: 0 });
 
 // 첫 재생은 3초 카운트다운 후 시작된다
 await new Promise((resolve) => setTimeout(resolve, 4000));

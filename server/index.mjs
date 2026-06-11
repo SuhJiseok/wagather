@@ -47,13 +47,17 @@ function extractYouTubeId(input) {
   return null;
 }
 
+function normalizeParticipantId(participantId) {
+  return String(participantId || "").trim().slice(0, 80);
+}
+
 function serializeRoom(room) {
   const playback = normalizedPlayback(room);
   const participants = [...room.participants.values()].map((participant) => ({
     id: participant.id,
     nickname: participant.nickname,
     isHost: participant.id === room.hostId,
-    canControl: participant.id === room.controlId,
+    canControl: participant.id === room.hostId,
     localMode: participant.localMode,
     playerState: participant.playerState,
     currentTime: participant.currentTime,
@@ -106,9 +110,16 @@ function getRoomOrError(roomId, socket) {
   return room;
 }
 
+function getSocketParticipant(room, socket, participantId) {
+  const id = normalizeParticipantId(participantId);
+  if (!id || socket.data.roomId !== room.id || socket.data.participantId !== id) return null;
+  return room.participants.get(id) || null;
+}
+
 app.post("/api/rooms", (req, res) => {
   const videoId = extractYouTubeId(String(req.body.youtubeUrl || ""));
   const nickname = String(req.body.nickname || "").trim().slice(0, 20);
+  const hostId = normalizeParticipantId(req.body.participantId);
 
   if (!videoId) {
     res.status(400).json({ message: "유튜브 링크를 확인해 주세요." });
@@ -120,14 +131,19 @@ app.post("/api/rooms", (req, res) => {
     return;
   }
 
+  if (!hostId) {
+    res.status(400).json({ message: "방장 정보를 확인할 수 없습니다." });
+    return;
+  }
+
   let id = makeRoomId();
   while (rooms.has(id)) id = makeRoomId();
 
   rooms.set(id, {
     id,
     videoId,
-    hostId: null,
-    controlId: null,
+    hostId,
+    controlId: hostId,
     createdAt: Date.now(),
     lastActivity: Date.now(),
     playback: {
@@ -229,7 +245,12 @@ io.on("connection", (socket) => {
     const room = getRoomOrError(roomId, socket);
     if (!room) return;
 
-    const id = String(participantId || socket.id);
+    const id = normalizeParticipantId(participantId);
+    if (!id) {
+      socket.emit("room-error", "참여자 정보를 확인할 수 없습니다.");
+      return;
+    }
+
     const displayName = String(nickname || "게스트").trim().slice(0, 20) || "게스트";
     const participant = {
       id,
@@ -243,7 +264,7 @@ io.on("connection", (socket) => {
 
     room.participants.set(id, participant);
     if (!room.hostId) room.hostId = id;
-    if (!room.controlId) room.controlId = room.hostId;
+    room.controlId = room.hostId;
     room.lastActivity = Date.now();
 
     socket.data.roomId = roomId;
@@ -258,7 +279,7 @@ io.on("connection", (socket) => {
   socket.on("heartbeat", ({ roomId, participantId, currentTime, playerState, localMode }) => {
     const room = rooms.get(roomId);
     if (!room) return;
-    const participant = room.participants.get(String(participantId));
+    const participant = getSocketParticipant(room, socket, participantId);
     if (!participant) return;
 
     participant.currentTime = Number.isFinite(currentTime) ? Number(currentTime) : participant.currentTime;
@@ -271,9 +292,9 @@ io.on("connection", (socket) => {
   socket.on("playback-command", ({ roomId, participantId, action, time }) => {
     const room = getRoomOrError(roomId, socket);
     if (!room) return;
-    const id = String(participantId);
-    const participant = room.participants.get(id);
-    if (!participant || room.controlId !== id || participant.localMode === "freeplay") return;
+    const participant = getSocketParticipant(room, socket, participantId);
+    if (!participant || room.hostId !== participant.id) return;
+    if (!["play", "pause", "seek"].includes(action)) return;
 
     const normalized = normalizedPlayback(room);
     const nextTime = Number.isFinite(time) ? Math.max(0, Number(time)) : normalized.time;
@@ -297,7 +318,7 @@ io.on("connection", (socket) => {
       room.hasShownInitialCountdown = true;
       room.playback = { state: "paused", time: nextTime, updatedAt: now };
       io.to(roomId).emit("play-countdown", {
-        sourceId: id,
+        sourceId: participant.id,
         playback: normalizedPlayback(room),
         playAt
       });
@@ -329,21 +350,10 @@ io.on("connection", (socket) => {
 
     room.lastActivity = Date.now();
     io.to(roomId).emit("remote-command", {
-      sourceId: id,
+      sourceId: participant.id,
       action,
       playback: normalizedPlayback(room)
     });
-    emitRoom(room);
-  });
-
-  socket.on("grant-control", ({ roomId, participantId, targetId }) => {
-    const room = getRoomOrError(roomId, socket);
-    if (!room) return;
-    if (room.hostId !== String(participantId)) return;
-    if (!room.participants.has(String(targetId))) return;
-
-    room.controlId = String(targetId);
-    room.lastActivity = Date.now();
     emitRoom(room);
   });
 
@@ -351,9 +361,8 @@ io.on("connection", (socket) => {
     const room = getRoomOrError(roomId, socket);
     if (!room) return;
 
-    const id = String(participantId);
-    const participant = room.participants.get(id);
-    const canChangeVideo = participant && (room.hostId === id || room.controlId === id);
+    const participant = getSocketParticipant(room, socket, participantId);
+    const canChangeVideo = participant && room.hostId === participant.id;
     const videoId = extractYouTubeId(String(youtubeUrl || ""));
 
     if (!canChangeVideo) {
@@ -389,7 +398,7 @@ io.on("connection", (socket) => {
   socket.on("sync-choice", ({ roomId, participantId, mode }) => {
     const room = getRoomOrError(roomId, socket);
     if (!room) return;
-    const participant = room.participants.get(String(participantId));
+    const participant = getSocketParticipant(room, socket, participantId);
     if (!participant) return;
     participant.localMode = mode === "freeplay" ? "freeplay" : mode === "waiting" ? "waiting" : "synced";
     participant.updatedAt = Date.now();
@@ -399,7 +408,7 @@ io.on("connection", (socket) => {
   socket.on("chat-message", ({ roomId, participantId, text, videoTime }) => {
     const room = getRoomOrError(roomId, socket);
     if (!room) return;
-    const participant = room.participants.get(String(participantId));
+    const participant = getSocketParticipant(room, socket, participantId);
     const body = String(text || "").trim().slice(0, 240);
     if (!participant || !body) return;
 
@@ -420,9 +429,10 @@ io.on("connection", (socket) => {
   socket.on("emoji-reaction", ({ roomId, participantId, emoji, videoTime }) => {
     const room = getRoomOrError(roomId, socket);
     if (!room) return;
-    const participant = room.participants.get(String(participantId));
-    const allowed = ["ㅋㅋ", "헉", "👏", "❤️", "😮", "🔥"];
-    const reaction = allowed.includes(emoji) ? emoji : "👏";
+    const participant = getSocketParticipant(room, socket, participantId);
+    const isEmojiLike =
+      typeof emoji === "string" && emoji.length > 0 && emoji.length <= 8 && !/[\p{L}\p{N}\s]/u.test(emoji);
+    const reaction = isEmojiLike ? emoji : "👏";
     if (!participant) return;
 
     const message = {
@@ -443,7 +453,7 @@ io.on("connection", (socket) => {
   socket.on("cursor-chat", ({ roomId, participantId, text, x, y }) => {
     const room = rooms.get(roomId);
     if (!room) return;
-    const participant = room.participants.get(String(participantId));
+    const participant = getSocketParticipant(room, socket, participantId);
     if (!participant) return;
 
     room.lastActivity = Date.now();
@@ -460,7 +470,7 @@ io.on("connection", (socket) => {
   socket.on("tap-ping", ({ roomId, participantId, x, y }) => {
     const room = rooms.get(roomId);
     if (!room) return;
-    const participant = room.participants.get(String(participantId));
+    const participant = getSocketParticipant(room, socket, participantId);
     if (!participant) return;
 
     room.lastActivity = Date.now();
@@ -480,12 +490,7 @@ io.on("connection", (socket) => {
 
     const participant = room.participants.get(participantId);
     room.participants.delete(participantId);
-    if (room.hostId === participantId) {
-      const nextHost = room.participants.values().next().value;
-      room.hostId = nextHost?.id || null;
-      room.controlId = room.hostId;
-    }
-    if (room.controlId === participantId) room.controlId = room.hostId;
+    room.controlId = room.hostId;
     room.lastActivity = Date.now();
 
     if (participant) socket.to(roomId).emit("system-message", `${participant.nickname}님이 나갔어요.`);
