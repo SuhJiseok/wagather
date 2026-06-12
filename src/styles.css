@@ -970,6 +970,12 @@ a.brand-mark {
   animation: prompt-in 200ms ease both;
 }
 
+.create-room-modal {
+  gap: 14px;
+  width: min(400px, 100%);
+  padding: 24px;
+}
+
 .modal-handle {
   display: none;
 }
@@ -3157,6 +3163,24 @@ input::placeholder {
     border-radius: 26px 26px 0 0;
     border-bottom: 0;
     animation-name: sheet-in;
+  }
+
+  .create-room-modal-layer {
+    padding: 18px;
+    place-items: center;
+  }
+
+  .create-room-modal {
+    width: min(380px, 100%);
+    max-height: calc(100% - 36px);
+    padding: 22px 18px;
+    border-radius: 22px;
+    border-bottom: 1px solid var(--glass-border);
+    animation-name: prompt-in;
+  }
+
+  .create-room-modal .modal-handle {
+    display: none;
   }
 
   .modal-handle {

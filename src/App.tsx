@@ -1006,8 +1006,17 @@ function CreateRoomModal({ initialUrl, onClose }: { initialUrl?: string; onClose
   }
 
   return (
-    <div className="modal-layer" role="dialog" aria-modal="true" aria-label="새 방 만들기" onClick={onClose}>
-      <div className="modal-card glass-panel scroll-area scroll-area-y" onClick={(event) => event.stopPropagation()}>
+    <div
+      className="modal-layer create-room-modal-layer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="새 방 만들기"
+      onClick={onClose}
+    >
+      <div
+        className="modal-card create-room-modal glass-panel scroll-area scroll-area-y"
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="modal-handle" aria-hidden="true" />
         <button className="modal-close" type="button" aria-label="닫기" onClick={onClose}>
           <X size={17} />
