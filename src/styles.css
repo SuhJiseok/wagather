@@ -375,6 +375,19 @@ a.brand-mark {
   color: rgba(201, 242, 95, 0.75);
 }
 
+.people-now {
+  color: rgba(244, 240, 232, 0.55);
+}
+
+.people-now.active {
+  color: var(--accent);
+}
+
+.people-total {
+  margin-left: -2px;
+  color: rgba(244, 240, 232, 0.45);
+}
+
 .room-card-body {
   display: grid;
   gap: 4px;

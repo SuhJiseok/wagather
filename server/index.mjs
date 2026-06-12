@@ -241,6 +241,7 @@ app.post("/api/rooms", async (req, res) => {
     countdownTimer: null,
     videoHistory: [createVideoHistoryItem(videoId, now, nickname, videoMetadata?.title)],
     participants: new Map(),
+    members: new Map([[hostId, nickname]]),
     messages: []
   });
 
@@ -264,6 +265,7 @@ app.get("/api/rooms/summary", (req, res) => {
       active: true,
       videoId: room.videoId,
       participantCount: room.participants.size,
+      memberCount: Math.max(room.members?.size ?? 0, room.participants.size),
       participants: [...room.participants.values()]
         .slice(0, 6)
         .map((participant) => ({ id: participant.id, nickname: participant.nickname })),
@@ -344,6 +346,8 @@ io.on("connection", (socket) => {
     };
 
     room.participants.set(id, participant);
+    if (!room.members) room.members = new Map();
+    room.members.set(id, displayName);
     if (!room.hostId) room.hostId = id;
     room.controlId = room.hostId;
     room.lastActivity = Date.now();

@@ -147,6 +147,7 @@ type RoomSummary = {
   active: boolean;
   videoId?: string;
   participantCount?: number;
+  memberCount?: number;
   participants?: { id: string; nickname: string }[];
   playbackState?: PlaybackState;
   lastMessage?: { author: string; text: string; type: "chat" | "emoji"; createdAt: number } | null;
@@ -877,17 +878,18 @@ function describeRoom(entry: JoinedRoomEntry, summary: RoomSummary | null, loadi
       preview: "이 기기에서만 보이는 방이에요.",
       ended: false,
       live: false,
-      count: 0
+      count: 0,
+      total: 0
     };
   }
   if (!summary) {
     if (loading) {
-      return { title: rememberedTitle || "같이 보기 방", preview: "방 정보를 불러오는 중...", ended: false, live: false, count: 0 };
+      return { title: rememberedTitle || "같이 보기 방", preview: "방 정보를 불러오는 중...", ended: false, live: false, count: 0, total: 0 };
     }
-    return { title: rememberedTitle || "같이 보기 방", preview: "종료된 방이에요.", ended: true, live: false, count: 0 };
+    return { title: rememberedTitle || "같이 보기 방", preview: "종료된 방이에요.", ended: true, live: false, count: 0, total: 0 };
   }
   if (!summary.active) {
-    return { title: rememberedTitle || "같이 보기 방", preview: "종료된 방이에요.", ended: true, live: false, count: 0 };
+    return { title: rememberedTitle || "같이 보기 방", preview: "종료된 방이에요.", ended: true, live: false, count: 0, total: 0 };
   }
 
   const selfId = getParticipantId();
@@ -896,12 +898,15 @@ function describeRoom(entry: JoinedRoomEntry, summary: RoomSummary | null, loadi
   const preview = summary.lastMessage
     ? `${summary.lastMessage.author}: ${summary.lastMessage.text}`
     : "아직 대화가 없어요. 첫 반응을 남겨보세요.";
+  const count = summary.participantCount || 0;
+  const knownMembers = (entry.peers?.length || 0) + 1;
   return {
     title,
     preview,
     ended: false,
     live: summary.playbackState === "playing",
-    count: summary.participantCount || 0
+    count,
+    total: Math.max(summary.memberCount || 0, knownMembers, count)
   };
 }
 
@@ -942,9 +947,10 @@ function RoomCard({ entry, summary, loading }: { entry: JoinedRoomEntry; summary
         <strong>{info.title}</strong>
         <span className="room-card-meta">
           {showCount && (
-            <span className="people-chip" aria-label={`참여자 ${info.count}명`}>
+            <span className="people-chip" aria-label={`현재 ${info.count}명 접속 중, 전체 ${info.total}명`}>
               <UsersRound size={13} />
-              {info.count}
+              <span className={`people-now ${info.count > 0 ? "active" : ""}`}>{info.count}</span>
+              <span className="people-total">/{info.total}</span>
             </span>
           )}
           ROOM {entry.roomId} · {formatRelativeTime(entry.lastJoinedAt)}
@@ -1007,9 +1013,10 @@ function ChatsPage() {
                     <div className="chat-room-top">
                       <strong>{info.title}</strong>
                       {!entry.isPreview && summary?.active && (
-                        <span className="people-chip" aria-label={`참여자 ${info.count}명`}>
+                        <span className="people-chip" aria-label={`현재 ${info.count}명 접속 중, 전체 ${info.total}명`}>
                           <UsersRound size={13} />
-                          {info.count}
+                          <span className={`people-now ${info.count > 0 ? "active" : ""}`}>{info.count}</span>
+                          <span className="people-total">/{info.total}</span>
                         </span>
                       )}
                       <time className="chat-room-time">{formatRelativeTime(time)}</time>
