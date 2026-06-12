@@ -271,6 +271,10 @@ a.brand-mark {
   gap: 14px;
 }
 
+.home-rail-section {
+  min-width: 0;
+}
+
 .rail-head {
   display: flex;
   align-items: center;
@@ -318,7 +322,8 @@ a.brand-mark {
   grid-auto-columns: clamp(210px, 24vw, 264px);
   gap: 14px;
   overflow-x: auto;
-  padding: 4px 4px 10px;
+  overscroll-behavior-x: contain;
+  padding: 6px 4px 10px;
   scrollbar-width: thin;
 }
 
@@ -331,6 +336,15 @@ a.brand-mark {
   transition:
     transform 160ms ease,
     background 160ms ease;
+}
+
+/* backdrop-filter는 스크롤 중 매 프레임 뒤 배경을 다시 샘플링해 레일이 버벅인다.
+   카드류는 블러 없이 반투명 배경만 유지한다. */
+.room-card,
+.video-card,
+.chat-room-item {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .room-card:hover:not(:disabled) {
@@ -418,11 +432,38 @@ a.brand-mark {
   gap: 14px;
 }
 
+.video-rail {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: clamp(214px, 24vw, 268px);
+  gap: 14px;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding: 6px 4px 10px;
+  scrollbar-width: thin;
+}
+
+.popular-page {
+  display: grid;
+  gap: 18px;
+}
+
+.popular-page-head {
+  align-items: flex-end;
+}
+
+.popular-video-grid {
+  align-items: start;
+}
+
 .video-card {
   display: grid;
+  grid-template-rows: auto 64px;
   align-content: start;
   gap: 10px;
   padding: 10px 10px 14px;
+  min-height: 0;
   color: var(--text);
   text-align: left;
   transition:
@@ -437,13 +478,18 @@ a.brand-mark {
 
 .video-card-body {
   display: grid;
+  grid-template-rows: 38px 16px;
   gap: 5px;
+  height: 64px;
+  min-height: 64px;
+  overflow: hidden;
   padding: 0 4px;
 }
 
 .video-card-body strong {
   display: -webkit-box;
   overflow: hidden;
+  height: 38px;
   font-size: 14px;
   line-height: 1.35;
   -webkit-box-orient: vertical;
@@ -456,9 +502,201 @@ a.brand-mark {
   font-weight: 700;
 }
 
+.video-card-meta,
+.history-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 16px;
+  overflow: hidden;
+  flex-wrap: wrap;
+}
+
+.video-card-meta > span:first-child {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.category-filter-row {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+  padding: 3px 2px 4px;
+  scrollbar-width: none;
+}
+
+.category-filter-row::-webkit-scrollbar {
+  display: none;
+}
+
+.category-filter-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 13px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+  transition:
+    background 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.category-filter-chip:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateY(-1px);
+}
+
+.category-filter-chip.active {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: rgba(201, 242, 95, 0.54);
+}
+
+.room-thumb .category-pill,
+.history-thumb .category-pill {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  max-width: calc(100% - 16px);
+  min-height: 23px;
+  padding: 0 8px;
+  overflow: hidden;
+  color: var(--category-ink, #10170f);
+  background: var(--category-bg, #d8e0d1);
+  border: 1px solid var(--category-border, rgba(255, 255, 255, 0.42));
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+}
+
+.history-thumb .category-pill {
+  top: 6px;
+  right: 6px;
+  min-height: 21px;
+  padding: 0 7px;
+  font-size: 10px;
+}
+
+.category-tone-music {
+  --category-bg: #cfff55;
+  --category-ink: #1b2404;
+  --category-border: rgba(207, 255, 85, 0.52);
+}
+
+.category-tone-gaming {
+  --category-bg: #8fd8ff;
+  --category-ink: #061c2b;
+  --category-border: rgba(143, 216, 255, 0.52);
+}
+
+.category-tone-entertainment {
+  --category-bg: #ffb1d0;
+  --category-ink: #31101d;
+  --category-border: rgba(255, 177, 208, 0.54);
+}
+
+.category-tone-sports {
+  --category-bg: #93f0a3;
+  --category-ink: #08230d;
+  --category-border: rgba(147, 240, 163, 0.52);
+}
+
+.category-tone-news {
+  --category-bg: #ffd36e;
+  --category-ink: #2b1c04;
+  --category-border: rgba(255, 211, 110, 0.54);
+}
+
+.category-tone-education {
+  --category-bg: #b9b6ff;
+  --category-ink: #14123a;
+  --category-border: rgba(185, 182, 255, 0.54);
+}
+
+.category-tone-science {
+  --category-bg: #78efd8;
+  --category-ink: #05231e;
+  --category-border: rgba(120, 239, 216, 0.52);
+}
+
+.category-tone-style {
+  --category-bg: #ffc19a;
+  --category-ink: #311707;
+  --category-border: rgba(255, 193, 154, 0.54);
+}
+
+.category-tone-comedy {
+  --category-bg: #ffe86b;
+  --category-ink: #2a2202;
+  --category-border: rgba(255, 232, 107, 0.54);
+}
+
+.category-tone-film {
+  --category-bg: #d7c4ff;
+  --category-ink: #1d1136;
+  --category-border: rgba(215, 196, 255, 0.54);
+}
+
+.category-tone-auto {
+  --category-bg: #c4d6e6;
+  --category-ink: #101b24;
+  --category-border: rgba(196, 214, 230, 0.52);
+}
+
+.category-tone-animals {
+  --category-bg: #a7e6c6;
+  --category-ink: #0b2317;
+  --category-border: rgba(167, 230, 198, 0.52);
+}
+
+.category-tone-travel {
+  --category-bg: #9fd7c6;
+  --category-ink: #072119;
+  --category-border: rgba(159, 215, 198, 0.52);
+}
+
+.category-tone-people {
+  --category-bg: #f4d0a7;
+  --category-ink: #2c1805;
+  --category-border: rgba(244, 208, 167, 0.54);
+}
+
+.category-tone-nonprofit,
+.category-tone-default {
+  --category-bg: #dce8c2;
+  --category-ink: #18200d;
+  --category-border: rgba(220, 232, 194, 0.52);
+}
+
 .watch-overlay {
   position: absolute;
   inset: 0;
+  z-index: 1;
   display: grid;
   place-items: center;
   background: rgba(3, 4, 3, 0.4);
@@ -704,6 +942,7 @@ a.brand-mark {
 
 .history-watch-date {
   color: var(--text);
+  font-size: 12px;
   font-weight: 800;
 }
 

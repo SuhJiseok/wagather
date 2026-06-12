@@ -51,6 +51,8 @@ type ChatMessage = {
 type VideoHistoryItem = {
   videoId: string;
   title: string | null;
+  categoryId?: string | null;
+  categoryTitle?: string | null;
   addedAt: number;
   addedBy: string | null;
 };
@@ -139,7 +141,14 @@ type PopularVideo = {
   videoId: string;
   title: string;
   author: string;
+  categoryId?: string | null;
+  categoryTitle?: string | null;
   thumbnail: string;
+};
+
+type PopularCategory = {
+  id: string;
+  title: string;
 };
 
 type RoomSummary = {
@@ -292,29 +301,68 @@ function formatRecentWatchedAt(timestamp: number) {
 
 const FALLBACK_POPULAR: PopularVideo[] = (
   [
-    ["9bZkp7q19f0", "PSY - GANGNAM STYLE(강남스타일) M/V", "officialpsy"],
-    ["gdZLi9oWNZg", "BTS (방탄소년단) 'Dynamite' Official MV", "HYBE LABELS"],
-    ["WMweEpGlu_U", "BTS (방탄소년단) 'Butter' Official MV", "HYBE LABELS"],
-    ["IHNzOHi8sJs", "BLACKPINK - '뚜두뚜두 (DDU-DU DDU-DU)' M/V", "BLACKPINK"],
-    ["ioNng23DkIM", "BLACKPINK - 'How You Like That' M/V", "BLACKPINK"],
-    ["XqZsoesa55w", "Baby Shark Dance | 상어가족", "Pinkfong Baby Shark"],
-    ["kJQP7kiw5Fk", "Luis Fonsi - Despacito ft. Daddy Yankee", "Luis Fonsi"],
-    ["JGwWNGJdvx8", "Ed Sheeran - Shape of You (Official Music Video)", "Ed Sheeran"],
-    ["OPf0YbXqDm0", "Mark Ronson - Uptown Funk ft. Bruno Mars", "Mark Ronson"],
-    ["fJ9rUzIMcZQ", "Queen - Bohemian Rhapsody (Official Video)", "Queen Official"],
-    ["60ItHLz5WEA", "Alan Walker - Faded", "Alan Walker"],
-    ["dQw4w9WgXcQ", "Rick Astley - Never Gonna Give You Up (Official Video)", "Rick Astley"]
+    ["9bZkp7q19f0", "PSY - GANGNAM STYLE(강남스타일) M/V", "officialpsy", "10", "음악"],
+    ["gdZLi9oWNZg", "BTS (방탄소년단) 'Dynamite' Official MV", "HYBE LABELS", "10", "음악"],
+    ["WMweEpGlu_U", "BTS (방탄소년단) 'Butter' Official MV", "HYBE LABELS", "10", "음악"],
+    ["IHNzOHi8sJs", "BLACKPINK - '뚜두뚜두 (DDU-DU DDU-DU)' M/V", "BLACKPINK", "10", "음악"],
+    ["ioNng23DkIM", "BLACKPINK - 'How You Like That' M/V", "BLACKPINK", "10", "음악"],
+    ["XqZsoesa55w", "Baby Shark Dance | 상어가족", "Pinkfong Baby Shark", "27", "교육"],
+    ["kJQP7kiw5Fk", "Luis Fonsi - Despacito ft. Daddy Yankee", "Luis Fonsi", "10", "음악"],
+    ["JGwWNGJdvx8", "Ed Sheeran - Shape of You (Official Music Video)", "Ed Sheeran", "10", "음악"],
+    ["OPf0YbXqDm0", "Mark Ronson - Uptown Funk ft. Bruno Mars", "Mark Ronson", "10", "음악"],
+    ["fJ9rUzIMcZQ", "Queen - Bohemian Rhapsody (Official Video)", "Queen Official", "10", "음악"],
+    ["60ItHLz5WEA", "Alan Walker - Faded", "Alan Walker", "10", "음악"],
+    ["dQw4w9WgXcQ", "Rick Astley - Never Gonna Give You Up (Official Video)", "Rick Astley", "10", "음악"]
   ] as const
-).map(([videoId, title, author]) => ({
+).map(([videoId, title, author, categoryId, categoryTitle]) => ({
   videoId,
   title,
   author,
+  categoryId,
+  categoryTitle,
   thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`
 }));
 const KNOWN_VIDEO_TITLE_BY_ID = new Map(FALLBACK_POPULAR.map((video) => [video.videoId, video.title]));
 
 function knownVideoTitle(videoId: string) {
   return KNOWN_VIDEO_TITLE_BY_ID.get(videoId) || null;
+}
+
+function categoryToneClassName(categoryId?: string | null) {
+  const toneByCategoryId: Record<string, string> = {
+    "1": "film",
+    "2": "auto",
+    "10": "music",
+    "15": "animals",
+    "17": "sports",
+    "19": "travel",
+    "20": "gaming",
+    "22": "people",
+    "23": "comedy",
+    "24": "entertainment",
+    "25": "news",
+    "26": "style",
+    "27": "education",
+    "28": "science",
+    "29": "nonprofit"
+  };
+
+  return `category-tone-${toneByCategoryId[String(categoryId || "")] || "default"}`;
+}
+
+function categoryPillClassName(categoryId?: string | null) {
+  return `category-pill ${categoryToneClassName(categoryId)}`;
+}
+
+function popularCategories(videos: PopularVideo[] | null): PopularCategory[] {
+  const byId = new Map<string, PopularCategory>();
+  for (const video of videos || []) {
+    const id = String(video.categoryId || "").trim();
+    const title = String(video.categoryTitle || "").trim();
+    if (!id || !title || byId.has(id)) continue;
+    byId.set(id, { id, title });
+  }
+  return [...byId.values()].sort((a, b) => a.title.localeCompare(b.title, "ko"));
 }
 
 function roomActionWidth(label: string) {
@@ -324,6 +372,62 @@ function roomActionWidth(label: string) {
 function navigate(to: string) {
   window.history.pushState({}, "", to);
   window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+function popularPath(categoryId: string) {
+  return categoryId === "all" ? "/popular" : `/popular?category=${encodeURIComponent(categoryId)}`;
+}
+
+function currentPopularCategory() {
+  const category = new URLSearchParams(window.location.search).get("category");
+  return category?.trim() || "all";
+}
+
+function useHorizontalWheel<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+
+    let target = 0;
+    let frame = 0;
+    let animating = false;
+
+    const step = () => {
+      const distance = target - element.scrollLeft;
+      if (Math.abs(distance) < 0.8) {
+        element.scrollLeft = target;
+        animating = false;
+        return;
+      }
+      element.scrollLeft += distance * 0.22;
+      frame = window.requestAnimationFrame(step);
+    };
+
+    const onWheel = (event: WheelEvent) => {
+      if (element.scrollWidth <= element.clientWidth) return;
+      let delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+      if (!delta) return;
+      if (event.deltaMode === 1) delta *= 32;
+      event.preventDefault();
+
+      if (!animating) target = element.scrollLeft;
+      target = Math.max(0, Math.min(element.scrollWidth - element.clientWidth, target + delta));
+      if (!animating) {
+        animating = true;
+        frame = window.requestAnimationFrame(step);
+      }
+    };
+
+    element.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      element.removeEventListener("wheel", onWheel);
+      window.cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  return ref;
 }
 
 function usePath() {
@@ -472,9 +576,11 @@ function makeVideoHistoryItem(
   videoId: string,
   addedAt: number,
   addedBy: string | null,
-  title: string | null = knownVideoTitle(videoId)
+  title: string | null = knownVideoTitle(videoId),
+  categoryId: string | null = null,
+  categoryTitle: string | null = null
 ): VideoHistoryItem {
-  return { videoId, title, addedAt, addedBy };
+  return { videoId, title, categoryId, categoryTitle, addedAt, addedBy };
 }
 
 function compactVideoHistory(history: VideoHistoryItem[]) {
@@ -486,6 +592,8 @@ function compactVideoHistory(history: VideoHistoryItem[]) {
       latestByVideo.set(item.videoId, {
         videoId: item.videoId,
         title: item.title || current?.title || knownVideoTitle(item.videoId),
+        categoryId: item.categoryId || current?.categoryId || null,
+        categoryTitle: item.categoryTitle || current?.categoryTitle || null,
         addedAt: item.addedAt,
         addedBy: item.addedBy || null
       });
@@ -576,16 +684,18 @@ export function App() {
   const roomMatch = path.match(/^\/room\/([^/]+)/);
   if (roomMatch) return <RoomPage roomId={roomMatch[1]} key={roomMatch[1]} />;
 
-  const active = path.startsWith("/chats") ? "chats" : "home";
-  return <AppShell active={active}>{active === "chats" ? <ChatsPage /> : <HomePage />}</AppShell>;
+  const active = path.startsWith("/chats") ? "chats" : path.startsWith("/popular") ? "popular" : "home";
+  const page = active === "chats" ? <ChatsPage /> : active === "popular" ? <PopularPage /> : <HomePage />;
+  return <AppShell active={active}>{page}</AppShell>;
 }
 
 const NAV_ITEMS = [
   { key: "home", label: "홈", to: "/", icon: Home },
+  { key: "popular", label: "인기영상", to: "/popular", icon: Flame },
   { key: "chats", label: "채팅방", to: "/chats", icon: MessagesSquare }
 ] as const;
 
-function AppShell({ active, children }: { active: "home" | "chats"; children: React.ReactNode }) {
+function AppShell({ active, children }: { active: "home" | "popular" | "chats"; children: React.ReactNode }) {
   const [loginOpen, setLoginOpen] = useState(false);
 
   function go(event: React.MouseEvent, to: string) {
@@ -953,7 +1063,7 @@ function RoomCard({ entry, summary, loading }: { entry: JoinedRoomEntry; summary
               <span className="people-total">/{info.total}</span>
             </span>
           )}
-          ROOM {entry.roomId} · {formatRelativeTime(entry.lastJoinedAt)}
+          <span>마지막 참여 {formatRelativeTime(entry.lastJoinedAt)}</span>
         </span>
       </div>
     </button>
@@ -1043,11 +1153,8 @@ function ChatsPage() {
   );
 }
 
-function HomePage() {
-  const [createModalUrl, setCreateModalUrl] = useState<string | null>(null);
+function usePopularVideos() {
   const [popular, setPopular] = useState<PopularVideo[] | null>(null);
-  const myRooms = useMyRooms();
-  const railRooms = myRooms.entries.slice(0, 8);
 
   useEffect(() => {
     let cancelled = false;
@@ -1067,6 +1174,136 @@ function HomePage() {
       cancelled = true;
     };
   }, []);
+
+  return popular;
+}
+
+function filterPopularVideos(videos: PopularVideo[] | null, activeCategory: string) {
+  if (!videos) return null;
+  if (activeCategory === "all") return videos;
+  return videos.filter((video) => video.categoryId === activeCategory);
+}
+
+function CategoryFilter({
+  categories,
+  activeCategory,
+  onChange,
+  mode = "select"
+}: {
+  categories: PopularCategory[];
+  activeCategory: string;
+  onChange: (categoryId: string) => void;
+  mode?: "select" | "nav";
+}) {
+  const filterRef = useHorizontalWheel<HTMLDivElement>();
+  if (!categories.length) return null;
+
+  return (
+    <div className="category-filter-row" aria-label="영상 카테고리 필터" ref={filterRef}>
+      <button
+        className={`category-filter-chip ${mode === "select" && activeCategory === "all" ? "active" : ""}`}
+        type="button"
+        aria-pressed={mode === "select" ? activeCategory === "all" : undefined}
+        onClick={() => onChange("all")}
+      >
+        전체
+      </button>
+      {categories.map((category) => (
+        <button
+          className={`category-filter-chip ${categoryToneClassName(category.id)} ${
+            mode === "select" && activeCategory === category.id ? "active" : ""
+          }`}
+          type="button"
+          aria-pressed={mode === "select" ? activeCategory === category.id : undefined}
+          key={category.id}
+          onClick={() => onChange(category.id)}
+        >
+          {category.title}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PopularVideoCard({
+  video,
+  onSelect,
+  showCategoryBadge
+}: {
+  video: PopularVideo;
+  onSelect: (video: PopularVideo) => void;
+  showCategoryBadge: boolean;
+}) {
+  return (
+    <button className="video-card glass-card" type="button" onClick={() => onSelect(video)}>
+      <div className="room-thumb">
+        <img src={video.thumbnail} alt="" loading="lazy" />
+        {showCategoryBadge && video.categoryTitle && (
+          <span className={categoryPillClassName(video.categoryId)}>{video.categoryTitle}</span>
+        )}
+        <span className="watch-overlay" aria-hidden="true">
+          <span>
+            <Play size={14} />
+            같이 보기
+          </span>
+        </span>
+      </div>
+      <div className="video-card-body">
+        <strong>{video.title}</strong>
+        <div className="video-card-meta">
+          <span>{video.author}</span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function PopularVideoCollection({
+  videos,
+  variant,
+  onSelect,
+  showCategoryBadge = true
+}: {
+  videos: PopularVideo[] | null;
+  variant: "rail" | "grid";
+  onSelect: (video: PopularVideo) => void;
+  showCategoryBadge?: boolean;
+}) {
+  const className = variant === "rail" ? "video-rail" : "video-grid popular-video-grid";
+  const skeletonCount = variant === "rail" ? 8 : 12;
+  const railRef = useHorizontalWheel<HTMLDivElement>();
+
+  return (
+    <div className={className} ref={variant === "rail" ? railRef : undefined}>
+      {videos === null
+        ? Array.from({ length: skeletonCount }, (_, index) => (
+            <div className="video-card glass-card skeleton" key={index}>
+              <div className="room-thumb" />
+              <div className="video-card-body">
+                <span className="skeleton-bar" style={{ width: "86%" }} />
+                <span className="skeleton-bar" style={{ width: "48%" }} />
+              </div>
+            </div>
+          ))
+        : videos.map((video) => (
+            <PopularVideoCard
+              video={video}
+              onSelect={onSelect}
+              showCategoryBadge={showCategoryBadge}
+              key={video.videoId}
+            />
+          ))}
+    </div>
+  );
+}
+
+function HomePage() {
+  const [createModalUrl, setCreateModalUrl] = useState<string | null>(null);
+  const popular = usePopularVideos();
+  const myRooms = useMyRooms();
+  const railRooms = myRooms.entries.slice(0, 8);
+  const roomRailRef = useHorizontalWheel<HTMLDivElement>();
+  const categories = useMemo(() => popularCategories(popular), [popular]);
 
   async function startWatchTogether(video: PopularVideo) {
     const nickname = (localStorage.getItem(STORAGE_NICKNAME) || "").trim();
@@ -1095,7 +1332,7 @@ function HomePage() {
         </button>
       </section>
 
-      <section className="home-rooms" aria-label="참여 중인 채팅방">
+      <section className="home-rooms home-rail-section" aria-label="참여 중인 채팅방">
         <div className="rail-head">
           <h2>
             <MessagesSquare size={20} />
@@ -1118,7 +1355,7 @@ function HomePage() {
             </button>
           </div>
         ) : (
-          <div className="room-rail">
+          <div className="room-rail" ref={roomRailRef}>
             {railRooms.map((entry) => (
               <RoomCard
                 key={entry.roomId}
@@ -1131,13 +1368,23 @@ function HomePage() {
         )}
       </section>
 
-      <section className="home-rooms" aria-label="지금 인기 있는 영상">
+      <section className="home-rooms home-rail-section" aria-label="지금 인기 있는 영상">
         <div className="rail-head">
           <h2>
             <Flame size={20} />
             지금 인기 있는 영상
           </h2>
+          <button className="rail-more" type="button" onClick={() => navigate("/popular")}>
+            전체 보기
+            <ChevronRight size={16} />
+          </button>
         </div>
+        <CategoryFilter
+          categories={categories}
+          activeCategory="all"
+          mode="nav"
+          onChange={(categoryId) => navigate(popularPath(categoryId))}
+        />
         {popular !== null && popular.length === 0 ? (
           <div className="empty-card glass-panel">
             <Flame size={26} />
@@ -1145,42 +1392,78 @@ function HomePage() {
             <p>잠시 후 다시 시도하거나, 새 방 만들기로 직접 유튜브 링크를 붙여보세요.</p>
           </div>
         ) : (
-          <div className="video-grid">
-            {popular === null
-              ? Array.from({ length: 8 }, (_, index) => (
-                  <div className="video-card glass-card skeleton" key={index}>
-                    <div className="room-thumb" />
-                    <div className="video-card-body">
-                      <span className="skeleton-bar" style={{ width: "86%" }} />
-                      <span className="skeleton-bar" style={{ width: "48%" }} />
-                    </div>
-                  </div>
-                ))
-              : popular.map((video) => (
-                  <button
-                    className="video-card glass-card"
-                    type="button"
-                    key={video.videoId}
-                    onClick={() => startWatchTogether(video)}
-                  >
-                    <div className="room-thumb">
-                      <img src={video.thumbnail} alt="" loading="lazy" />
-                      <span className="watch-overlay" aria-hidden="true">
-                        <span>
-                          <Play size={14} />
-                          같이 보기
-                        </span>
-                      </span>
-                    </div>
-                    <div className="video-card-body">
-                      <strong>{video.title}</strong>
-                      <span>{video.author}</span>
-                    </div>
-                  </button>
-                ))}
-          </div>
+          <PopularVideoCollection videos={popular} variant="rail" onSelect={startWatchTogether} />
         )}
       </section>
+
+      {createModalUrl !== null && <CreateRoomModal initialUrl={createModalUrl} onClose={() => setCreateModalUrl(null)} />}
+    </main>
+  );
+}
+
+function PopularPage() {
+  const [createModalUrl, setCreateModalUrl] = useState<string | null>(null);
+  const [activeCategory, setActiveCategory] = useState(currentPopularCategory);
+  const popular = usePopularVideos();
+  const categories = useMemo(() => popularCategories(popular), [popular]);
+  const filteredPopular = useMemo(() => filterPopularVideos(popular, activeCategory), [activeCategory, popular]);
+
+  useEffect(() => {
+    const syncCategory = () => setActiveCategory(currentPopularCategory());
+    window.addEventListener("popstate", syncCategory);
+    return () => window.removeEventListener("popstate", syncCategory);
+  }, []);
+
+  function selectCategory(categoryId: string) {
+    setActiveCategory(categoryId);
+    navigate(popularPath(categoryId));
+  }
+
+  async function startWatchTogether(video: PopularVideo) {
+    const nickname = (localStorage.getItem(STORAGE_NICKNAME) || "").trim();
+    const youtubeUrl = `https://www.youtube.com/watch?v=${video.videoId}`;
+    if (!nickname) {
+      setCreateModalUrl(youtubeUrl);
+      return;
+    }
+    try {
+      navigate(await createRoomRequest(youtubeUrl, nickname));
+    } catch {
+      setCreateModalUrl(youtubeUrl);
+    }
+  }
+
+  return (
+    <main className="page popular-page">
+      <header className="page-head popular-page-head">
+        <div>
+          <h1>인기영상</h1>
+          <p>카테고리별로 골라 바로 같이 보기 방을 만들 수 있어요.</p>
+        </div>
+      </header>
+
+      <CategoryFilter categories={categories} activeCategory={activeCategory} onChange={selectCategory} />
+
+      {popular !== null && popular.length === 0 ? (
+        <div className="empty-card glass-panel">
+          <Flame size={26} />
+          <strong>추천 영상을 불러오지 못했어요</strong>
+          <p>잠시 후 다시 시도하거나, 새 방 만들기로 직접 유튜브 링크를 붙여보세요.</p>
+        </div>
+      ) : filteredPopular !== null && filteredPopular.length === 0 ? (
+        <div className="empty-card glass-panel">
+          <Flame size={26} />
+          <strong>이 카테고리 영상이 아직 없어요</strong>
+          <p>다른 카테고리를 선택해 보세요.</p>
+        </div>
+      ) : (
+        <PopularVideoCollection
+          videos={filteredPopular}
+          variant="grid"
+          onSelect={startWatchTogether}
+          showCategoryBadge={activeCategory === "all"}
+        />
+      )}
 
       {createModalUrl !== null && <CreateRoomModal initialUrl={createModalUrl} onClose={() => setCreateModalUrl(null)} />}
     </main>
@@ -2439,13 +2722,20 @@ function RoomPage({ roomId }: { roomId: string }) {
                       disabled={!canChangeVideo || isCurrent}
                       aria-current={isCurrent ? "true" : undefined}
                     >
-                      <div className="history-thumb">{thumb && <img src={thumb} alt="" loading="lazy" />}</div>
+                      <div className="history-thumb">
+                        {thumb && <img src={thumb} alt="" loading="lazy" />}
+                        {item.categoryTitle && (
+                          <span className={categoryPillClassName(item.categoryId)}>{item.categoryTitle}</span>
+                        )}
+                      </div>
                       <div className="history-copy">
                         <div className="history-title-row">
                           <strong>{title}</strong>
                           {isCurrent && <span>현재 영상</span>}
                         </div>
-                        <p className="history-watch-date">최근 시청일 · {formatRecentWatchedAt(item.addedAt)}</p>
+                        <div className="history-meta-row">
+                          <span className="history-watch-date">최근 시청일 · {formatRecentWatchedAt(item.addedAt)}</span>
+                        </div>
                         {item.addedBy && <p className="history-added-by">{item.addedBy}님 추가</p>}
                       </div>
                     </button>
@@ -2589,7 +2879,7 @@ function RoomPage({ roomId }: { roomId: string }) {
           </div>
           <div className="below-player">
             <div>
-              <p className="room-kicker">ROOM {roomId}</p>
+              <p className="room-kicker">같이 보는 중</p>
               <h1>같이 보기 방</h1>
             </div>
             <div className={`mode-pill ${isStaticPreview ? "preview" : localMode}`}>
