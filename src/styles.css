@@ -53,6 +53,28 @@ body.room-scroll-lock {
   inset: 0;
 }
 
+html.room-scroll-lock.room-header-scroll-open,
+body.room-scroll-lock.room-header-scroll-open {
+  height: auto;
+  min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-x: none;
+  overscroll-behavior-y: auto;
+}
+
+body.room-scroll-lock.room-header-scroll-open {
+  position: static;
+  inset: auto;
+}
+
+body.room-scroll-lock.room-header-scroll-open #root {
+  height: auto;
+  min-height: calc(100dvh + 96px);
+  overflow: visible;
+  overscroll-behavior-y: auto;
+}
+
 body {
   background: linear-gradient(135deg, #11130f 0%, #14160f 52%, #0c0d0b 100%);
   word-break: keep-all;
@@ -3281,6 +3303,17 @@ input::placeholder {
   body.room-scroll-lock #root {
     height: var(--room-visual-height, 100dvh);
     min-height: var(--room-visual-height, 100dvh);
+  }
+
+  html.room-scroll-lock.room-header-scroll-open,
+  body.room-scroll-lock.room-header-scroll-open {
+    height: auto;
+    min-height: 100%;
+  }
+
+  body.room-scroll-lock.room-header-scroll-open #root {
+    height: auto;
+    min-height: calc(var(--room-visual-height, 100dvh) + 96px);
   }
 
   .room-shell,

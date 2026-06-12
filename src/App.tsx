@@ -1762,12 +1762,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const initialCountdownRequestedRef = useRef(false);
   const lastKnownPlayerTimeRef = useRef(0);
   const chatFocusBaseHeightRef = useRef<number | null>(null);
-  const headerPullRefreshRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    refreshing: boolean;
-  } | null>(null);
+  const headerScrollRelockTimeoutRef = useRef<number | null>(null);
 
   function scrollMessagesToBottom() {
     const pin = () => {
@@ -1811,15 +1806,22 @@ function RoomPage({ roomId }: { roomId: string }) {
     window.scrollTo(0, 0);
 
     const keepRoomPinned = () => {
+      if (document.body.classList.contains("room-header-scroll-open")) return;
       if (window.scrollY !== 0) window.scrollTo(0, 0);
     };
 
     window.addEventListener("scroll", keepRoomPinned, { passive: true });
 
     return () => {
+      if (headerScrollRelockTimeoutRef.current !== null) {
+        window.clearTimeout(headerScrollRelockTimeoutRef.current);
+        headerScrollRelockTimeoutRef.current = null;
+      }
       window.removeEventListener("scroll", keepRoomPinned);
       document.body.classList.remove("room-scroll-lock");
+      document.body.classList.remove("room-header-scroll-open");
       document.documentElement.classList.remove("room-scroll-lock");
+      document.documentElement.classList.remove("room-header-scroll-open");
       clearRoomViewportVars();
       window.scrollTo(0, previousScrollY);
     };
@@ -2829,49 +2831,46 @@ function RoomPage({ roomId }: { roomId: string }) {
     }
   ];
 
-  function beginHeaderRefreshPull(event: React.PointerEvent<HTMLElement>) {
+  function clearHeaderScrollRelockTimer() {
+    if (headerScrollRelockTimeoutRef.current === null) return;
+    window.clearTimeout(headerScrollRelockTimeoutRef.current);
+    headerScrollRelockTimeoutRef.current = null;
+  }
+
+  function openHeaderPageScroll() {
+    clearHeaderScrollRelockTimer();
+    document.body.classList.add("room-header-scroll-open");
+    document.documentElement.classList.add("room-header-scroll-open");
+  }
+
+  function scheduleHeaderPageScrollLock() {
+    clearHeaderScrollRelockTimer();
+    headerScrollRelockTimeoutRef.current = window.setTimeout(() => {
+      document.body.classList.remove("room-header-scroll-open");
+      document.documentElement.classList.remove("room-header-scroll-open");
+      window.scrollTo(0, 0);
+      headerScrollRelockTimeoutRef.current = null;
+    }, 900);
+  }
+
+  function beginHeaderPageScroll(event: React.PointerEvent<HTMLElement>) {
     if (event.pointerType === "mouse") return;
-    if (window.scrollY > 4) return;
-
-    headerPullRefreshRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      refreshing: false
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
+    openHeaderPageScroll();
   }
 
-  function updateHeaderRefreshPull(event: React.PointerEvent<HTMLElement>) {
-    const pull = headerPullRefreshRef.current;
-    if (!pull || pull.pointerId !== event.pointerId || pull.refreshing) return;
-
-    const deltaX = Math.abs(event.clientX - pull.startX);
-    const deltaY = event.clientY - pull.startY;
-
-    if (deltaY < -8 || deltaX > 56) {
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
-      headerPullRefreshRef.current = null;
-      return;
-    }
-
-    if (deltaY >= 76 && window.scrollY <= 4) {
-      pull.refreshing = true;
-      syncRoomViewportVars();
-      window.location.reload();
-    }
+  function keepHeaderPageScroll(event: React.PointerEvent<HTMLElement>) {
+    if (event.pointerType === "mouse") return;
+    openHeaderPageScroll();
   }
 
-  function endHeaderRefreshPull(event: React.PointerEvent<HTMLElement>) {
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
+  function endHeaderPageScroll(event: React.PointerEvent<HTMLElement>) {
+    if (event.pointerType === "mouse") return;
+    scheduleHeaderPageScrollLock();
+  }
 
-    if (headerPullRefreshRef.current?.pointerId === event.pointerId) {
-      headerPullRefreshRef.current = null;
-    }
+  function handleHeaderWheel() {
+    openHeaderPageScroll();
+    scheduleHeaderPageScrollLock();
   }
 
   if (!joined) {
@@ -2913,10 +2912,12 @@ function RoomPage({ roomId }: { roomId: string }) {
     <main className={`room-shell ${chatFocused ? "chat-focused" : ""}`}>
       <header
         className="room-header"
-        onPointerDown={beginHeaderRefreshPull}
-        onPointerMove={updateHeaderRefreshPull}
-        onPointerUp={endHeaderRefreshPull}
-        onPointerCancel={endHeaderRefreshPull}
+        onPointerDown={beginHeaderPageScroll}
+        onPointerMove={keepHeaderPageScroll}
+        onPointerUp={endHeaderPageScroll}
+        onPointerCancel={endHeaderPageScroll}
+        onPointerLeave={endHeaderPageScroll}
+        onWheel={handleHeaderWheel}
       >
         <a
           className="brand-mark compact"
