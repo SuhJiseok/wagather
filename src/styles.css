@@ -1610,6 +1610,8 @@ input::placeholder {
   gap: 16px;
   min-height: 58px;
   margin-bottom: 16px;
+  overscroll-behavior-y: auto;
+  touch-action: pan-y;
 }
 
 .room-actions {
@@ -3508,8 +3510,8 @@ input::placeholder {
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    min-height: 34px;
-    padding: 7px 10px 3px;
+    min-height: 40px;
+    padding: 6px 10px;
     border-bottom: 0;
   }
 
@@ -3540,8 +3542,9 @@ input::placeholder {
     color: rgba(244, 240, 232, 0.58);
     font-size: 12px;
     font-weight: 800;
+    min-height: 28px;
     white-space: nowrap;
-    overflow: hidden;
+    overflow: visible;
     text-overflow: ellipsis;
   }
 
@@ -3551,9 +3554,16 @@ input::placeholder {
     text-overflow: ellipsis;
   }
 
+  .mobile-chat-subline > span.mobile-avatars:first-child {
+    overflow: visible;
+  }
+
   .mobile-avatars {
     flex: 0 0 auto;
+    align-items: center;
+    min-height: 28px;
     padding-left: 4px;
+    overflow: visible;
   }
 
   .mobile-chat-actions {

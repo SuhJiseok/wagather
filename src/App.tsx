@@ -1762,6 +1762,12 @@ function RoomPage({ roomId }: { roomId: string }) {
   const initialCountdownRequestedRef = useRef(false);
   const lastKnownPlayerTimeRef = useRef(0);
   const chatFocusBaseHeightRef = useRef<number | null>(null);
+  const headerPullRefreshRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    refreshing: boolean;
+  } | null>(null);
 
   function scrollMessagesToBottom() {
     const pin = () => {
@@ -2823,6 +2829,51 @@ function RoomPage({ roomId }: { roomId: string }) {
     }
   ];
 
+  function beginHeaderRefreshPull(event: React.PointerEvent<HTMLElement>) {
+    if (event.pointerType === "mouse") return;
+    if (window.scrollY > 4) return;
+
+    headerPullRefreshRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      refreshing: false
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function updateHeaderRefreshPull(event: React.PointerEvent<HTMLElement>) {
+    const pull = headerPullRefreshRef.current;
+    if (!pull || pull.pointerId !== event.pointerId || pull.refreshing) return;
+
+    const deltaX = Math.abs(event.clientX - pull.startX);
+    const deltaY = event.clientY - pull.startY;
+
+    if (deltaY < -8 || deltaX > 56) {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      headerPullRefreshRef.current = null;
+      return;
+    }
+
+    if (deltaY >= 76 && window.scrollY <= 4) {
+      pull.refreshing = true;
+      syncRoomViewportVars();
+      window.location.reload();
+    }
+  }
+
+  function endHeaderRefreshPull(event: React.PointerEvent<HTMLElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    if (headerPullRefreshRef.current?.pointerId === event.pointerId) {
+      headerPullRefreshRef.current = null;
+    }
+  }
+
   if (!joined) {
     return (
       <main className="join-shell">
@@ -2860,7 +2911,13 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   return (
     <main className={`room-shell ${chatFocused ? "chat-focused" : ""}`}>
-      <header className="room-header">
+      <header
+        className="room-header"
+        onPointerDown={beginHeaderRefreshPull}
+        onPointerMove={updateHeaderRefreshPull}
+        onPointerUp={endHeaderRefreshPull}
+        onPointerCancel={endHeaderRefreshPull}
+      >
         <a
           className="brand-mark compact"
           href="/"
