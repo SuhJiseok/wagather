@@ -837,7 +837,7 @@ function LoginModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="modal-layer" role="dialog" aria-modal="true" aria-label="로그인" onClick={onClose}>
-      <div className="modal-card glass-panel login-card" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card glass-panel login-card scroll-area scroll-area-y" onClick={(event) => event.stopPropagation()}>
         <div className="modal-handle" aria-hidden="true" />
         <button className="modal-close" type="button" aria-label="닫기" onClick={onClose}>
           <X size={17} />
@@ -931,7 +931,7 @@ function CreateRoomModal({ initialUrl, onClose }: { initialUrl?: string; onClose
 
   return (
     <div className="modal-layer" role="dialog" aria-modal="true" aria-label="새 방 만들기" onClick={onClose}>
-      <div className="modal-card glass-panel" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-card glass-panel scroll-area scroll-area-y" onClick={(event) => event.stopPropagation()}>
         <div className="modal-handle" aria-hidden="true" />
         <button className="modal-close" type="button" aria-label="닫기" onClick={onClose}>
           <X size={17} />
@@ -1018,6 +1018,19 @@ function describeRoom(entry: JoinedRoomEntry, summary: RoomSummary | null, loadi
     count,
     total: Math.max(summary.memberCount || 0, knownMembers, count)
   };
+}
+
+type ScrollAreaProps = React.HTMLAttributes<HTMLDivElement> & {
+  axis?: "x" | "y";
+  bar?: "thin" | "hidden";
+  ref?: React.Ref<HTMLDivElement>;
+};
+
+function ScrollArea({ axis = "y", bar = "thin", className = "", ...rest }: ScrollAreaProps) {
+  const classes = ["scroll-area", `scroll-area-${axis}`, bar === "hidden" ? "scroll-area-hidden" : "", className]
+    .filter(Boolean)
+    .join(" ");
+  return <div {...rest} className={classes} />;
 }
 
 function LiveRing() {
@@ -1199,7 +1212,7 @@ function CategoryFilter({
   if (!categories.length) return null;
 
   return (
-    <div className="category-filter-row" aria-label="영상 카테고리 필터" ref={filterRef}>
+    <ScrollArea axis="x" bar="hidden" className="category-filter-row" aria-label="영상 카테고리 필터" ref={filterRef}>
       <button
         className={`category-filter-chip ${mode === "select" && activeCategory === "all" ? "active" : ""}`}
         type="button"
@@ -1221,7 +1234,7 @@ function CategoryFilter({
           {category.title}
         </button>
       ))}
-    </div>
+    </ScrollArea>
   );
 }
 
@@ -1269,32 +1282,38 @@ function PopularVideoCollection({
   onSelect: (video: PopularVideo) => void;
   showCategoryBadge?: boolean;
 }) {
-  const className = variant === "rail" ? "video-rail" : "video-grid popular-video-grid";
   const skeletonCount = variant === "rail" ? 8 : 12;
   const railRef = useHorizontalWheel<HTMLDivElement>();
 
-  return (
-    <div className={className} ref={variant === "rail" ? railRef : undefined}>
-      {videos === null
-        ? Array.from({ length: skeletonCount }, (_, index) => (
-            <div className="video-card glass-card skeleton" key={index}>
-              <div className="room-thumb" />
-              <div className="video-card-body">
-                <span className="skeleton-bar" style={{ width: "86%" }} />
-                <span className="skeleton-bar" style={{ width: "48%" }} />
-              </div>
+  const content =
+    videos === null
+      ? Array.from({ length: skeletonCount }, (_, index) => (
+          <div className="video-card glass-card skeleton" key={index}>
+            <div className="room-thumb" />
+            <div className="video-card-body">
+              <span className="skeleton-bar" style={{ width: "86%" }} />
+              <span className="skeleton-bar" style={{ width: "48%" }} />
             </div>
-          ))
-        : videos.map((video) => (
-            <PopularVideoCard
-              video={video}
-              onSelect={onSelect}
-              showCategoryBadge={showCategoryBadge}
-              key={video.videoId}
-            />
-          ))}
-    </div>
-  );
+          </div>
+        ))
+      : videos.map((video) => (
+          <PopularVideoCard
+            video={video}
+            onSelect={onSelect}
+            showCategoryBadge={showCategoryBadge}
+            key={video.videoId}
+          />
+        ));
+
+  if (variant === "rail") {
+    return (
+      <ScrollArea axis="x" className="video-rail" ref={railRef}>
+        {content}
+      </ScrollArea>
+    );
+  }
+
+  return <div className="video-grid popular-video-grid">{content}</div>;
 }
 
 function HomePage() {
@@ -1355,7 +1374,7 @@ function HomePage() {
             </button>
           </div>
         ) : (
-          <div className="room-rail" ref={roomRailRef}>
+          <ScrollArea axis="x" className="room-rail" ref={roomRailRef}>
             {railRooms.map((entry) => (
               <RoomCard
                 key={entry.roomId}
@@ -1364,7 +1383,7 @@ function HomePage() {
                 loading={myRooms.loading}
               />
             ))}
-          </div>
+          </ScrollArea>
         )}
       </section>
 
@@ -2652,7 +2671,7 @@ function RoomPage({ roomId }: { roomId: string }) {
           aria-label="영상 변경"
           onClick={() => setVideoModalOpen(false)}
         >
-          <div className="modal-card glass-panel" onClick={(event) => event.stopPropagation()}>
+          <div className="modal-card glass-panel scroll-area scroll-area-y" onClick={(event) => event.stopPropagation()}>
             <div className="modal-handle" aria-hidden="true" />
             <button className="modal-close" type="button" aria-label="닫기" onClick={() => setVideoModalOpen(false)}>
               <X size={17} />
@@ -2705,7 +2724,7 @@ function RoomPage({ roomId }: { roomId: string }) {
               <p>히스토리</p>
               <h2>이 방에서 봤던 영상</h2>
             </div>
-            <div className="video-history-list">
+            <div className="video-history-list scroll-area scroll-area-y">
               {videoHistory.length === 0 ? (
                 <p className="empty-state">아직 기록된 영상이 없습니다.</p>
               ) : (
@@ -2974,7 +2993,7 @@ function RoomPage({ roomId }: { roomId: string }) {
               <MessageCircle size={18} />
               <h2>실시간 채팅</h2>
             </div>
-            <div className="message-list" ref={messageListRef}>
+            <ScrollArea className="message-list" ref={messageListRef}>
               {messages.length === 0 && (
                 <p className="empty-state">첫 반응을 남겨보세요.</p>
               )}
@@ -2990,15 +3009,15 @@ function RoomPage({ roomId }: { roomId: string }) {
                   </article>
                 );
               })}
-            </div>
+            </ScrollArea>
             <div className="chat-composer">
-              <div className="emoji-row" aria-label="빠른 반응">
+              <ScrollArea axis="x" bar="hidden" className="emoji-row" aria-label="빠른 반응">
                 {QUICK_EMOJIS.map((emoji) => (
                   <button key={emoji} onClick={() => sendEmoji(emoji)}>
                     {emoji}
                   </button>
                 ))}
-              </div>
+              </ScrollArea>
               <form className="chat-form" onSubmit={sendMessage}>
                 <span className="composer-avatar" aria-hidden="true">
                   {nickname ? nickname.slice(0, 1) : <UserRound size={18} />}
