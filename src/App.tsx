@@ -1761,6 +1761,20 @@ function RoomPage({ roomId }: { roomId: string }) {
   const staticHasShownInitialCountdownRef = useRef(false);
   const initialCountdownRequestedRef = useRef(false);
   const lastKnownPlayerTimeRef = useRef(0);
+  const chatFocusBaseHeightRef = useRef<number | null>(null);
+
+  function scrollMessagesToBottom() {
+    const pin = () => {
+      const messageList = messageListRef.current;
+      if (!messageList) return;
+      messageList.scrollTop = messageList.scrollHeight;
+    };
+
+    pin();
+    window.requestAnimationFrame(pin);
+    window.setTimeout(pin, 80);
+    window.setTimeout(pin, 240);
+  }
   const currentVideoIdRef = useRef<string | null>(null);
   const playerWrapRef = useRef<HTMLDivElement | null>(null);
   const lastMouseRef = useRef<{ x: number; y: number } | null>(null);
@@ -2010,6 +2024,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const peersKey = JSON.stringify(
     room?.participants.filter((participant) => participant.id !== selfId).map((participant) => participant.nickname) ?? []
   );
+  const latestMessageId = messages[messages.length - 1]?.id || "";
   useEffect(() => {
     const peers = JSON.parse(peersKey) as string[];
     if (!joined || !peers.length) return;
@@ -2021,10 +2036,8 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, [joined, peersKey, roomId]);
 
   useEffect(() => {
-    const messageList = messageListRef.current;
-    if (!messageList) return;
-    messageList.scrollTop = messageList.scrollHeight;
-  }, [messages.length]);
+    scrollMessagesToBottom();
+  }, [chatFocused, latestMessageId]);
 
   useEffect(() => {
     const textarea = chatInputRef.current;
@@ -2049,13 +2062,15 @@ function RoomPage({ roomId }: { roomId: string }) {
       if (!viewport) return 0;
       const visualHeight = viewport.height || window.innerHeight;
       const offsetTop = viewport.offsetTop || 0;
-      return Math.max(0, window.innerHeight - visualHeight - offsetTop);
+      const layoutInset = Math.max(0, window.innerHeight - visualHeight - offsetTop);
+      const baseHeight = chatFocusBaseHeightRef.current;
+      const visualInset = baseHeight ? Math.max(0, baseHeight - visualHeight - offsetTop) : 0;
+      return Math.max(layoutInset, visualInset);
     };
     let hasSeenKeyboard = getKeyboardInset() > 80;
     const releaseIfKeyboardClosed = () => {
       syncRoomViewportVars();
       if (!viewport) return;
-      if (document.activeElement !== chatInputRef.current) return;
       if (!window.matchMedia("(pointer: coarse), (max-width: 640px)").matches) return;
 
       const keyboardInset = getKeyboardInset();
@@ -2066,20 +2081,21 @@ function RoomPage({ roomId }: { roomId: string }) {
       if (!hasSeenKeyboard) return;
 
       setChatFocused(false);
+      chatFocusBaseHeightRef.current = null;
       window.requestAnimationFrame(() => {
         syncRoomViewportVars();
         window.scrollTo(0, 0);
-        if (messageListRef.current) {
-          messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
-        }
+        scrollMessagesToBottom();
       });
     };
 
     window.addEventListener("resize", releaseIfKeyboardClosed);
     viewport?.addEventListener("resize", releaseIfKeyboardClosed);
     viewport?.addEventListener("scroll", releaseIfKeyboardClosed);
+    const checkKeyboardState = window.setInterval(releaseIfKeyboardClosed, 160);
 
     return () => {
+      window.clearInterval(checkKeyboardState);
       window.removeEventListener("resize", releaseIfKeyboardClosed);
       viewport?.removeEventListener("resize", releaseIfKeyboardClosed);
       viewport?.removeEventListener("scroll", releaseIfKeyboardClosed);
@@ -2709,13 +2725,14 @@ function RoomPage({ roomId }: { roomId: string }) {
   }
 
   function keepVideoInView() {
+    if (!chatFocused) {
+      chatFocusBaseHeightRef.current = window.visualViewport?.height || window.innerHeight;
+    }
     setChatFocused(true);
     const pinRoom = () => {
       syncRoomViewportVars();
       window.scrollTo(0, 0);
-      if (messageListRef.current) {
-        messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
-      }
+      scrollMessagesToBottom();
     };
 
     window.requestAnimationFrame(pinRoom);
@@ -2727,8 +2744,10 @@ function RoomPage({ roomId }: { roomId: string }) {
   function releaseChatFocus() {
     window.setTimeout(() => {
       setChatFocused(false);
+      chatFocusBaseHeightRef.current = null;
       syncRoomViewportVars();
       window.scrollTo(0, 0);
+      scrollMessagesToBottom();
     }, 120);
   }
 
