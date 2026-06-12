@@ -1945,6 +1945,11 @@ input::placeholder {
   border: 0;
 }
 
+.player-frame.reaction-targeting .youtube-player,
+.player-frame.reaction-targeting .youtube-player iframe {
+  pointer-events: none;
+}
+
 .player-loading {
   position: absolute;
   inset: 0;
@@ -2072,6 +2077,13 @@ input::placeholder {
   --rise: -110dvh;
 }
 
+.emoji-balloon.point {
+  bottom: auto;
+  animation-name: balloon-pop-rise;
+  animation-timing-function: ease-out;
+  transform: translate(-50%, -50%);
+}
+
 @keyframes balloon-rise {
   0% {
     transform: translate3d(0, 0, 0) scale(0.58) rotate(-6deg);
@@ -2095,6 +2107,28 @@ input::placeholder {
 
   100% {
     transform: translate3d(var(--drift), var(--rise), 0) scale(1.05) rotate(-4deg);
+    opacity: 0;
+  }
+}
+
+@keyframes balloon-pop-rise {
+  0% {
+    transform: translate(-50%, -50%) scale(0.54) rotate(-8deg);
+    opacity: 0;
+  }
+
+  18% {
+    transform: translate3d(calc(-50% + var(--drift) * 0.12), calc(-50% - 14px), 0) scale(1.08) rotate(4deg);
+    opacity: 0.96;
+  }
+
+  62% {
+    transform: translate3d(calc(-50% + var(--drift) * 0.62), calc(-50% - 54px), 0) scale(1) rotate(-2deg);
+    opacity: 0.72;
+  }
+
+  100% {
+    transform: translate3d(calc(-50% + var(--drift)), calc(-50% - 92px), 0) scale(1.16) rotate(6deg);
     opacity: 0;
   }
 }
@@ -2248,16 +2282,17 @@ input::placeholder {
   }
 }
 
-.ping-overlay {
+.reaction-touch-overlay {
   position: absolute;
   inset: 0;
-  z-index: 6;
+  z-index: 20;
   padding: 0;
-  background: transparent;
+  background: rgba(0, 0, 0, 0.01);
   border: 0;
+  cursor: crosshair;
 }
 
-.ping-toggle {
+.mobile-reaction-dock {
   display: none;
 }
 
@@ -3363,27 +3398,105 @@ input::placeholder {
     font-size: 12px;
   }
 
-  .ping-toggle {
-    position: absolute;
-    right: 8px;
-    bottom: 50px;
-    z-index: 7;
-    display: grid;
-    place-items: center;
-    width: 38px;
-    height: 38px;
-    color: var(--text);
-    background: rgba(10, 11, 9, 0.55);
-    border: 1px solid rgba(255, 255, 255, 0.18);
+  .mobile-reaction-dock {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 0;
+    max-width: 30px;
+    min-height: 28px;
+    margin-left: 1px;
+    overflow: hidden;
+    background: rgba(244, 240, 232, 0.07);
+    border: 1px solid rgba(244, 240, 232, 0.1);
     border-radius: 999px;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    transition:
+      max-width 180ms ease,
+      background 180ms ease,
+      border-color 180ms ease,
+      box-shadow 180ms ease;
   }
 
-  .ping-toggle.active {
+  .mobile-reaction-dock.open {
+    width: min(210px, 56vw);
+    max-width: min(210px, 56vw);
+    background: rgba(17, 19, 15, 0.9);
+    border-color: rgba(201, 242, 95, 0.36);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.26);
+  }
+
+  .mobile-reaction-toggle {
+    display: grid;
+    flex: 0 0 auto;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    color: var(--text);
+    background: transparent;
+    border: 0;
+    border-radius: 999px;
+    font-size: 16px;
+    line-height: 1;
+    transition:
+      width 180ms ease,
+      height 180ms ease,
+      color 180ms ease,
+      background 180ms ease,
+      transform 180ms ease;
+  }
+
+  .mobile-reaction-dock.open .mobile-reaction-toggle,
+  .mobile-reaction-toggle.selected {
+    width: 34px;
+    height: 34px;
     color: var(--accent-ink);
     background: var(--accent);
-    border-color: transparent;
+    transform: scale(1.02);
+  }
+
+  .mobile-reaction-options {
+    display: inline-flex;
+    flex: 0 0 0;
+    align-items: center;
+    gap: 2px;
+    width: 0;
+    padding-right: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transition:
+      flex-basis 180ms ease,
+      width 180ms ease,
+      padding 180ms ease,
+      opacity 140ms ease;
+  }
+
+  .mobile-reaction-dock.open .mobile-reaction-options {
+    flex-basis: calc(min(210px, 56vw) - 40px);
+    width: calc(min(210px, 56vw) - 40px);
+    padding-right: 4px;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .mobile-reaction-options button {
+    display: grid;
+    flex: 0 0 auto;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 999px;
+    font-size: 16px;
+    line-height: 1;
+  }
+
+  .mobile-reaction-options button.selected {
+    background: rgba(201, 242, 95, 0.2);
+    box-shadow: inset 0 0 0 1px rgba(201, 242, 95, 0.44);
   }
 
   .below-player,

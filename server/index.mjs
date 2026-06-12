@@ -896,7 +896,7 @@ io.on("connection", (socket) => {
     io.to(roomId).emit("chat-message", message);
   });
 
-  socket.on("emoji-reaction", ({ roomId, participantId, emoji, videoTime }) => {
+  socket.on("emoji-reaction", ({ roomId, participantId, emoji, videoTime, x, y }) => {
     const room = getRoomOrError(roomId, socket);
     if (!room) return;
     const participant = getSocketParticipant(room, socket, participantId);
@@ -911,6 +911,8 @@ io.on("connection", (socket) => {
       authorId: participant.id,
       author: participant.nickname,
       text: reaction,
+      x: Number.isFinite(Number(x)) ? clampRatio(x) : undefined,
+      y: Number.isFinite(Number(y)) ? clampRatio(y) : undefined,
       videoTime: Number.isFinite(videoTime) ? Math.max(0, Number(videoTime)) : 0,
       createdAt: Date.now()
     };

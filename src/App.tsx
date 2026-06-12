@@ -88,6 +88,8 @@ type CountdownCommand = {
 
 type EmojiBurstEvent = {
   text: string;
+  x?: number;
+  y?: number;
 };
 
 type CursorChatEvent = {
@@ -111,6 +113,7 @@ type EmojiBalloon = {
   id: string;
   emoji: string;
   x: number;
+  y?: number;
   size: number;
   duration: number;
   delay: number;
@@ -1740,7 +1743,8 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [cursorChat, setCursorChat] = useState<{ x: number; y: number; text: string } | null>(null);
   const [remoteBubbles, setRemoteBubbles] = useState<Record<string, CursorChatEvent>>({});
   const [pings, setPings] = useState<TapPingEvent[]>([]);
-  const [pingMode, setPingMode] = useState(false);
+  const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
+  const [selectedReactionEmoji, setSelectedReactionEmoji] = useState<string | null>(null);
   const [resumePrompt, setResumePrompt] = useState<{ videoId: string; time: number } | null>(null);
   const [emojiBursts, setEmojiBursts] = useState<EmojiBalloon[]>([]);
 
@@ -2024,10 +2028,16 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, [remoteBubbles]);
 
   useEffect(() => {
-    if (!pingMode) return;
-    const timeout = window.setTimeout(() => setPingMode(false), 6000);
+    if (!reactionPickerOpen && !selectedReactionEmoji) return;
+    const timeout = window.setTimeout(
+      () => {
+        setReactionPickerOpen(false);
+        setSelectedReactionEmoji(null);
+      },
+      selectedReactionEmoji ? 10000 : 8000
+    );
     return () => window.clearTimeout(timeout);
-  }, [pingMode, pings.length]);
+  }, [reactionPickerOpen, selectedReactionEmoji]);
 
   const peersKey = JSON.stringify(
     room?.participants.filter((participant) => participant.id !== selfId).map((participant) => participant.nickname) ?? []
@@ -2180,7 +2190,11 @@ function RoomPage({ roomId }: { roomId: string }) {
     });
 
     socket.on("emoji-burst", (message: EmojiBurstEvent) => {
-      spawnEmojiBurst(message.text);
+      const point =
+        typeof message.x === "number" && typeof message.y === "number"
+          ? { x: clampRatio(message.x), y: clampRatio(message.y) }
+          : undefined;
+      spawnEmojiBurst(message.text, point);
     });
 
     return () => {
@@ -2560,22 +2574,25 @@ function RoomPage({ roomId }: { roomId: string }) {
     setMessageText("");
   }
 
-  function spawnEmojiBurst(emoji: string) {
+  function spawnEmojiBurst(emoji: string, point?: { x: number; y: number }) {
     const now = Date.now();
     setEmojiBursts((current) => {
       const active = current.filter((balloon) => balloon.expiresAt > now);
-      const count = active.length > MAX_EMOJI_BALLOONS * 0.7 ? 3 : EMOJI_BALLOONS_PER_BURST;
+      const count = point ? 5 : active.length > MAX_EMOJI_BALLOONS * 0.7 ? 3 : EMOJI_BALLOONS_PER_BURST;
       const batch: EmojiBalloon[] = Array.from({ length: count }, (_, index) => {
-        const duration = 1400 + Math.random() * 900;
+        const duration = point ? 920 + Math.random() * 460 : 1400 + Math.random() * 900;
         const delay = index * 45 + Math.random() * 80;
+        const spreadX = point ? (Math.random() - 0.5) * 11 : 0;
+        const spreadY = point ? (Math.random() - 0.5) * 10 : 0;
         return {
           id: `${now}-${Math.random().toString(36).slice(2)}-${index}`,
           emoji,
-          x: 8 + Math.random() * 84,
-          size: 17 + Math.random() * 11,
+          x: point ? clampRatio(point.x + spreadX / 100, 0.04, 0.96) * 100 : 8 + Math.random() * 84,
+          y: point ? clampRatio(point.y + spreadY / 100, 0.08, 0.88) * 100 : undefined,
+          size: point ? 22 + Math.random() * 13 : 17 + Math.random() * 11,
           duration,
           delay,
-          drift: -34 + Math.random() * 68,
+          drift: point ? -28 + Math.random() * 56 : -34 + Math.random() * 68,
           expiresAt: now + duration + delay + 160
         };
       });
@@ -2584,17 +2601,46 @@ function RoomPage({ roomId }: { roomId: string }) {
     });
   }
 
-  function sendEmoji(emoji: string) {
+  function sendEmoji(emoji: string, point?: { x: number; y: number }) {
     if (isStaticPreview) {
-      spawnEmojiBurst(emoji);
+      spawnEmojiBurst(emoji, point);
       return;
     }
     socketRef.current?.emit("emoji-reaction", {
       roomId,
       participantId: selfId,
       emoji,
+      x: point?.x,
+      y: point?.y,
       videoTime: hasPlayerApi(playerRef.current) ? playerRef.current.getCurrentTime() : localTime
     });
+  }
+
+  function toggleReactionPicker() {
+    setReactionPickerOpen((current) => {
+      if (current) setSelectedReactionEmoji(null);
+      return !current;
+    });
+  }
+
+  function selectReactionEmoji(emoji: string) {
+    setReactionPickerOpen(true);
+    setSelectedReactionEmoji(emoji);
+  }
+
+  function sendSelectedReactionAt(clientX: number, clientY: number) {
+    if (!selectedReactionEmoji) return;
+    const frame = playerWrapRef.current;
+    if (!frame) return;
+    const rect = frame.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const point = {
+      x: clampRatio((clientX - rect.left) / rect.width),
+      y: clampRatio((clientY - rect.top) / rect.height)
+    };
+    sendEmoji(selectedReactionEmoji, point);
+    setReactionPickerOpen(false);
+    setSelectedReactionEmoji(null);
   }
 
   function emitCursorChat(x: number, y: number, text: string, force = false) {
@@ -2636,27 +2682,6 @@ function RoomPage({ roomId }: { roomId: string }) {
     setCursorChat(null);
     if (isStaticPreview || !current) return;
     socketRef.current?.emit("cursor-chat", { roomId, participantId: selfId, text: "", x: current.x, y: current.y });
-  }
-
-  function sendPingAt(clientX: number, clientY: number) {
-    const frame = playerWrapRef.current;
-    if (!frame) return;
-    const rect = frame.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-    const x = clampRatio((clientX - rect.left) / rect.width);
-    const y = clampRatio((clientY - rect.top) / rect.height);
-    const ping: TapPingEvent = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      participantId: selfId,
-      nickname,
-      x,
-      y
-    };
-    setPings((current) => [...current.slice(-11), ping]);
-    window.setTimeout(() => setPings((current) => current.filter((item) => item.id !== ping.id)), 1800);
-    if (!isStaticPreview) {
-      socketRef.current?.emit("tap-ping", { roomId, participantId: selfId, x, y });
-    }
   }
 
   function applyRoomVideoChange(videoId: string | null, youtubeUrl: string) {
@@ -2841,16 +2866,24 @@ function RoomPage({ roomId }: { roomId: string }) {
     clearHeaderScrollRelockTimer();
     document.body.classList.add("room-header-scroll-open");
     document.documentElement.classList.add("room-header-scroll-open");
+    headerScrollRelockTimeoutRef.current = window.setTimeout(() => {
+      lockHeaderPageScroll();
+    }, 700);
   }
 
-  function scheduleHeaderPageScrollLock() {
+  function lockHeaderPageScroll() {
+    clearHeaderScrollRelockTimer();
+    document.body.classList.remove("room-header-scroll-open");
+    document.documentElement.classList.remove("room-header-scroll-open");
+    if (window.scrollY !== 0) window.scrollTo(0, 0);
+  }
+
+  function scheduleHeaderPageScrollLock(delay = 140) {
     clearHeaderScrollRelockTimer();
     headerScrollRelockTimeoutRef.current = window.setTimeout(() => {
-      document.body.classList.remove("room-header-scroll-open");
-      document.documentElement.classList.remove("room-header-scroll-open");
-      window.scrollTo(0, 0);
+      lockHeaderPageScroll();
       headerScrollRelockTimeoutRef.current = null;
-    }, 900);
+    }, delay);
   }
 
   function beginHeaderPageScroll(event: React.PointerEvent<HTMLElement>) {
@@ -2870,7 +2903,7 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   function handleHeaderWheel() {
     openHeaderPageScroll();
-    scheduleHeaderPageScrollLock();
+    scheduleHeaderPageScrollLock(180);
   }
 
   if (!joined) {
@@ -3120,7 +3153,16 @@ function RoomPage({ roomId }: { roomId: string }) {
 
       <section className="watch-layout">
         <div className="watch-main">
-          <div className="player-frame" ref={playerWrapRef}>
+          <div
+            className={`player-frame ${selectedReactionEmoji ? "reaction-targeting" : ""}`}
+            ref={playerWrapRef}
+            onPointerDownCapture={(event) => {
+              if (!selectedReactionEmoji) return;
+              event.preventDefault();
+              event.stopPropagation();
+              sendSelectedReactionAt(event.clientX, event.clientY);
+            }}
+          >
             <div id="youtube-player" className="youtube-player" />
             {!playerReady && (
               <div className="player-loading">
@@ -3230,23 +3272,38 @@ function RoomPage({ roomId }: { roomId: string }) {
               </div>
             )}
 
-            {pingMode && (
+            {selectedReactionEmoji && (
               <button
-                className="ping-overlay"
+                className="reaction-touch-overlay"
                 type="button"
-                aria-label="탭한 위치 포인팅"
-                onPointerDown={(event) => sendPingAt(event.clientX, event.clientY)}
+                aria-label="선택한 이모지 반응 남기기"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  sendSelectedReactionAt(event.clientX, event.clientY);
+                }}
               />
             )}
-            <button
-              className={`ping-toggle ${pingMode ? "active" : ""}`}
-              type="button"
-              aria-pressed={pingMode}
-              aria-label="여기 봐 포인터 모드"
-              onClick={() => setPingMode((current) => !current)}
-            >
-              <Pointer size={16} />
-            </button>
+            <div className="emoji-burst-layer" aria-hidden="true">
+              {emojiBursts.map((balloon) => (
+                <span
+                  className={`emoji-balloon ${balloon.y === undefined ? "" : "point"}`}
+                  key={balloon.id}
+                  style={
+                    {
+                      left: `${balloon.x}%`,
+                      top: balloon.y === undefined ? undefined : `${balloon.y}%`,
+                      fontSize: `${balloon.size}px`,
+                      animationDuration: `${balloon.duration}ms`,
+                      animationDelay: `${balloon.delay}ms`,
+                      "--drift": `${balloon.drift}px`
+                    } as React.CSSProperties
+                  }
+                >
+                  {balloon.emoji}
+                </span>
+              ))}
+            </div>
           </div>
           <div className="below-player">
             <div>
@@ -3279,7 +3336,12 @@ function RoomPage({ roomId }: { roomId: string }) {
           </div>
         </div>
 
-        <aside className="watch-sidebar">
+        <aside
+          className="watch-sidebar"
+          onPointerDown={lockHeaderPageScroll}
+          onPointerMove={lockHeaderPageScroll}
+          onWheel={lockHeaderPageScroll}
+        >
           <section className="sidebar-section chat-section">
             <div className="mobile-chat-handle" aria-hidden="true" />
             <div className="mobile-chat-header">
@@ -3306,6 +3368,30 @@ function RoomPage({ roomId }: { roomId: string }) {
                     )}
                   </span>
                   <span className="people-inline-count">{sortedParticipants.length}명</span>
+                  <div className={`mobile-reaction-dock ${reactionPickerOpen ? "open" : ""}`}>
+                    <button
+                      className={`mobile-reaction-toggle ${selectedReactionEmoji ? "selected" : ""}`}
+                      type="button"
+                      aria-expanded={reactionPickerOpen}
+                      aria-label="화면 이모지 반응"
+                      onClick={toggleReactionPicker}
+                    >
+                      {selectedReactionEmoji || <Pointer size={13} />}
+                    </button>
+                    <div className="mobile-reaction-options" aria-hidden={!reactionPickerOpen}>
+                      {QUICK_EMOJIS.map((emoji) => (
+                        <button
+                          className={selectedReactionEmoji === emoji ? "selected" : ""}
+                          key={emoji}
+                          type="button"
+                          onClick={() => selectReactionEmoji(emoji)}
+                          aria-label={`${emoji} 반응 선택`}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
               <div className="mobile-chat-actions">
@@ -3407,26 +3493,6 @@ function RoomPage({ roomId }: { roomId: string }) {
                   <Send size={18} />
                 </button>
               </form>
-            </div>
-
-            <div className="emoji-burst-layer" aria-hidden="true">
-              {emojiBursts.map((balloon) => (
-                <span
-                  className="emoji-balloon"
-                  key={balloon.id}
-                  style={
-                    {
-                      left: `${balloon.x}%`,
-                      fontSize: `${balloon.size}px`,
-                      animationDuration: `${balloon.duration}ms`,
-                      animationDelay: `${balloon.delay}ms`,
-                      "--drift": `${balloon.drift}px`
-                    } as React.CSSProperties
-                  }
-                >
-                  {balloon.emoji}
-                </span>
-              ))}
             </div>
           </section>
         </aside>
