@@ -730,6 +730,33 @@ function loadYouTubeApi() {
 
 export function App() {
   const path = usePath();
+
+  // 키보드/회전으로 보이는 영역이 바뀔 때 모달(바텀시트) 등이 따라가도록 앱 전역에서 추적
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const scheduleSync = () => {
+      syncRoomViewportVars();
+      window.requestAnimationFrame(syncRoomViewportVars);
+    };
+
+    syncRoomViewportVars();
+    window.addEventListener("resize", scheduleSync);
+    window.addEventListener("orientationchange", scheduleSync);
+    window.addEventListener("focus", scheduleSync);
+    document.addEventListener("visibilitychange", scheduleSync);
+    viewport?.addEventListener("resize", scheduleSync);
+    viewport?.addEventListener("scroll", scheduleSync);
+
+    return () => {
+      window.removeEventListener("resize", scheduleSync);
+      window.removeEventListener("orientationchange", scheduleSync);
+      window.removeEventListener("focus", scheduleSync);
+      document.removeEventListener("visibilitychange", scheduleSync);
+      viewport?.removeEventListener("resize", scheduleSync);
+      viewport?.removeEventListener("scroll", scheduleSync);
+    };
+  }, []);
+
   const roomMatch = path.match(/^\/room\/([^/]+)/);
   if (roomMatch) return <RoomPage roomId={roomMatch[1]} key={roomMatch[1]} />;
 

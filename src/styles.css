@@ -3139,6 +3139,11 @@ input::placeholder {
   }
 
   .modal-layer {
+    /* 키보드가 올라오면 보이는 영역(비주얼 뷰포트)에 맞춰 줄어들어
+       바텀시트가 항상 키보드 위에 위치한다 */
+    top: var(--room-viewport-offset, 0px);
+    bottom: auto;
+    height: var(--room-visual-height, 100dvh);
     padding: 0;
     place-items: end stretch;
     backdrop-filter: blur(8px);
@@ -3147,7 +3152,7 @@ input::placeholder {
 
   .modal-card {
     width: 100%;
-    max-height: calc(100dvh - 40px);
+    max-height: calc(100% - 32px);
     padding: 10px 20px calc(24px + env(safe-area-inset-bottom));
     border-radius: 26px 26px 0 0;
     border-bottom: 0;
