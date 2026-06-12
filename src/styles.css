@@ -3433,6 +3433,9 @@ input::placeholder {
 
   .room-shell.chat-focused .room-header,
   .room-shell.chat-focused .mobile-chat-handle,
+  .room-shell.chat-focused .mobile-chat-header,
+  .room-shell.chat-focused .message-list,
+  .room-shell.chat-focused .emoji-row,
   .room-shell.chat-focused .watch-sidebar .pause-prompt {
     display: none;
   }
@@ -3446,19 +3449,12 @@ input::placeholder {
     max-height: min(42dvh, calc(var(--room-visual-height, 100dvh) - 64px));
   }
 
-  .room-shell.chat-focused .message-list {
-    display: flex;
-    flex: 1 1 auto;
-    max-height: min(20dvh, 150px);
-    padding: 4px 10px 6px;
-  }
-
   .room-shell.chat-focused .chat-section {
     flex: 0 0 auto;
   }
 
   .room-shell.chat-focused .chat-composer {
-    gap: 6px;
+    gap: 0;
     padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
   }
 
@@ -3495,12 +3491,6 @@ input::placeholder {
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    min-height: 52px;
-    padding: 0 10px 9px;
-    border-bottom: 1px solid rgba(244, 240, 232, 0.1);
-  }
-
-  .room-shell.chat-focused .mobile-chat-header {
     min-height: 34px;
     padding: 7px 10px 3px;
     border-bottom: 0;
@@ -3512,7 +3502,7 @@ input::placeholder {
   }
 
   .mobile-chat-title-row {
-    display: flex;
+    display: none;
     align-items: center;
     gap: 7px;
     color: var(--text);
@@ -3529,22 +3519,13 @@ input::placeholder {
     align-items: center;
     gap: 7px;
     min-width: 0;
-    margin-top: 6px;
+    margin-top: 0;
     color: rgba(244, 240, 232, 0.58);
     font-size: 12px;
     font-weight: 800;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-
-  .room-shell.chat-focused .mobile-chat-title-row,
-  .room-shell.chat-focused .mobile-chat-actions {
-    display: none;
-  }
-
-  .room-shell.chat-focused .mobile-chat-subline {
-    margin-top: 0;
   }
 
   .mobile-chat-subline > span:first-child {
@@ -3559,7 +3540,7 @@ input::placeholder {
   }
 
   .mobile-chat-actions {
-    display: flex;
+    display: none;
     flex: 0 0 auto;
     align-items: center;
     gap: 6px;
@@ -3676,23 +3657,11 @@ input::placeholder {
     gap: 6px;
   }
 
-  .room-shell.chat-focused .emoji-row {
-    display: flex;
-    gap: 5px;
-  }
-
   .emoji-row button {
     min-width: 44px;
     min-height: 38px;
     padding: 0 10px;
     font-size: 15px;
-  }
-
-  .room-shell.chat-focused .emoji-row button {
-    min-width: 38px;
-    min-height: 32px;
-    padding: 0 8px;
-    font-size: 14px;
   }
 
   .chat-form {
