@@ -27,6 +27,22 @@ npm run dev
 http://localhost:3000
 ```
 
+## 유튜브 메타데이터
+
+일반 사용자는 유튜브 링크만 입력하면 됩니다. 영상 카테고리까지 가져오려면 서버 환경변수에 YouTube Data API 키를 등록합니다.
+
+```bash
+cp .env.example .env
+```
+
+```env
+YOUTUBE_API_KEY=your_youtube_data_api_key
+YOUTUBE_CATEGORY_REGION=KR
+YOUTUBE_CATEGORY_LANGUAGE=ko
+```
+
+API 키가 없거나 요청에 실패하면 기존처럼 YouTube oEmbed로 제목과 채널명만 가져오며, 카테고리 배지는 표시하지 않습니다.
+
 ## 문서
 
 - [기획 문서](docs/PLANNING.md)

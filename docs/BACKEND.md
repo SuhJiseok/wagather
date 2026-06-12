@@ -9,6 +9,19 @@
 - Express: 방 생성 API와 웹앱 제공
 - Socket.IO: 실시간 입장, 채팅, 재생 상태, 참여자 상태 전달
 - Vite middleware: 개발 중 프론트엔드 화면 제공
+- YouTube oEmbed/Data API: 영상 제목, 채널명, 카테고리 메타데이터 조회
+
+## 환경변수
+
+YouTube Data API 키는 사용자에게 받지 않고 서버 환경변수로 관리합니다. 로컬에서는 `.env.example`을 복사해 `.env`를 만들면 서버가 시작할 때 자동으로 읽습니다.
+
+```env
+YOUTUBE_API_KEY=your_youtube_data_api_key
+YOUTUBE_CATEGORY_REGION=KR
+YOUTUBE_CATEGORY_LANGUAGE=ko
+```
+
+`YOUTUBE_API_KEY`가 없거나 Data API 요청이 실패하면 기존처럼 YouTube oEmbed로 제목과 채널명만 조회합니다. 카테고리 ID/이름은 Data API가 성공했을 때만 영상 히스토리와 인기 영상 응답에 포함됩니다.
 
 ## 주요 API
 
@@ -62,7 +75,7 @@ Socket.IO로 주고받는 주요 이벤트는 아래와 같습니다.
 - 유튜브 영상 ID
 - 방장 ID
 - 방 기준 재생 상태
-- 방에서 재생했던 영상 히스토리: 영상 제목, 최근 시청 시각, 추가한 사람을 저장하고 같은 영상은 최근 기록 하나만 유지합니다.
+- 방에서 재생했던 영상 히스토리: 영상 제목, 카테고리, 최근 시청 시각, 추가한 사람을 저장하고 같은 영상은 최근 기록 하나만 유지합니다.
 - 참여자 목록
 - 최근 채팅 메시지
 

@@ -1,4 +1,5 @@
 import express from "express";
+import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,8 +8,32 @@ import { Server } from "socket.io";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, "..");
+
+function loadLocalEnvFile() {
+  const envPath = path.join(root, ".env");
+  if (!fs.existsSync(envPath)) return;
+
+  for (const rawLine of fs.readFileSync(envPath, "utf8").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!match || process.env[match[1]] !== undefined) continue;
+
+    let value = match[2].trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    process.env[match[1]] = value;
+  }
+}
+
+loadLocalEnvFile();
+
 const isProduction = process.env.NODE_ENV === "production";
 const port = Number(process.env.PORT || 3000);
+const youtubeApiKey = String(process.env.YOUTUBE_API_KEY || "").trim();
+const youtubeCategoryRegion = String(process.env.YOUTUBE_CATEGORY_REGION || "KR").trim().toUpperCase() || "KR";
+const youtubeCategoryLanguage = String(process.env.YOUTUBE_CATEGORY_LANGUAGE || "ko").trim() || "ko";
 
 const app = express();
 const server = http.createServer(app);
@@ -22,7 +47,27 @@ app.get("/favicon.ico", (_, res) => {
 
 const rooms = new Map();
 const VIDEO_METADATA_CACHE_TTL = 24 * 60 * 60 * 1000;
+const VIDEO_CATEGORY_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
+const YOUTUBE_DATA_API_BASE = "https://www.googleapis.com/youtube/v3";
 const videoMetadataCache = new Map();
+let videoCategoryTitleCache = { fetchedAt: 0, byId: new Map() };
+const FALLBACK_YOUTUBE_CATEGORY_TITLES = new Map([
+  ["1", "영화/애니메이션"],
+  ["2", "자동차"],
+  ["10", "음악"],
+  ["15", "반려동물/동물"],
+  ["17", "스포츠"],
+  ["19", "여행/이벤트"],
+  ["20", "게임"],
+  ["22", "인물/블로그"],
+  ["23", "코미디"],
+  ["24", "엔터테인먼트"],
+  ["25", "뉴스/정치"],
+  ["26", "노하우/스타일"],
+  ["27", "교육"],
+  ["28", "과학/기술"],
+  ["29", "비영리/사회운동"]
+]);
 
 function makeRoomId() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -58,49 +103,173 @@ function normalizeVideoTitle(title) {
   return normalized ? normalized.slice(0, 180) : null;
 }
 
-async function fetchYouTubeVideoMetadata(videoId) {
-  const cached = videoMetadataCache.get(videoId);
-  const now = Date.now();
-  if (cached && now - cached.fetchedAt < VIDEO_METADATA_CACHE_TTL) {
-    return cached.metadata;
-  }
+function normalizeVideoCategoryId(categoryId) {
+  const normalized = String(categoryId || "").trim();
+  return /^\d+$/.test(normalized) ? normalized : null;
+}
 
-  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+function normalizeVideoCategoryTitle(title) {
+  const normalized = String(title || "").trim();
+  return normalized ? normalized.slice(0, 80) : null;
+}
+
+async function fetchJsonWithTimeout(url, timeoutMs = 2500) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 2500);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(watchUrl)}&format=json`, {
-      signal: controller.signal
-    });
-    if (!response.ok) {
-      console.warn(`YouTube metadata request failed for ${videoId}: ${response.status}`);
-      return null;
-    }
-    const data = await response.json();
-    const title = normalizeVideoTitle(data.title);
-    if (!title) return null;
-    const metadata = {
-      title,
-      author: normalizeVideoTitle(data.author_name)
-    };
-    videoMetadataCache.set(videoId, { fetchedAt: now, metadata });
-    return metadata;
-  } catch (error) {
-    console.warn(
-      `YouTube metadata request failed for ${videoId}:`,
-      error instanceof Error ? error.message : String(error)
-    );
-    return null;
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
   } finally {
     clearTimeout(timeout);
   }
 }
 
-function createVideoHistoryItem(videoId, addedAt, addedBy, title = null) {
+async function fetchYouTubeCategoryTitles() {
+  const now = Date.now();
+  if (videoCategoryTitleCache.byId.size && now - videoCategoryTitleCache.fetchedAt < VIDEO_CATEGORY_CACHE_TTL) {
+    return videoCategoryTitleCache.byId;
+  }
+
+  const fallback = new Map(FALLBACK_YOUTUBE_CATEGORY_TITLES);
+  if (!youtubeApiKey) {
+    videoCategoryTitleCache = { fetchedAt: now, byId: fallback };
+    return fallback;
+  }
+
+  const url = new URL(`${YOUTUBE_DATA_API_BASE}/videoCategories`);
+  url.searchParams.set("part", "snippet");
+  url.searchParams.set("regionCode", youtubeCategoryRegion);
+  url.searchParams.set("hl", youtubeCategoryLanguage);
+  url.searchParams.set("key", youtubeApiKey);
+
+  try {
+    const data = await fetchJsonWithTimeout(url, 3000);
+    const byId = new Map(fallback);
+    for (const item of Array.isArray(data.items) ? data.items : []) {
+      const id = normalizeVideoCategoryId(item.id);
+      const title = normalizeVideoCategoryTitle(item.snippet?.title);
+      if (id && title) byId.set(id, title);
+    }
+    videoCategoryTitleCache = { fetchedAt: now, byId };
+    return byId;
+  } catch (error) {
+    console.warn(
+      "YouTube category metadata request failed:",
+      error instanceof Error ? error.message : String(error)
+    );
+    videoCategoryTitleCache = { fetchedAt: now, byId: fallback };
+    return fallback;
+  }
+}
+
+async function fetchYouTubeDataApiVideosMetadata(videoIds) {
+  const result = new Map();
+  if (!youtubeApiKey || !videoIds.length) return result;
+
+  const url = new URL(`${YOUTUBE_DATA_API_BASE}/videos`);
+  url.searchParams.set("part", "snippet");
+  url.searchParams.set("id", videoIds.join(","));
+  url.searchParams.set("key", youtubeApiKey);
+
+  try {
+    const data = await fetchJsonWithTimeout(url, 3000);
+    const categoryTitles = await fetchYouTubeCategoryTitles();
+    for (const item of Array.isArray(data.items) ? data.items : []) {
+      const id = String(item.id || "").trim();
+      const title = normalizeVideoTitle(item.snippet?.title);
+      if (!id || !title) continue;
+
+      const categoryId = normalizeVideoCategoryId(item.snippet?.categoryId);
+      result.set(id, {
+        title,
+        author: normalizeVideoTitle(item.snippet?.channelTitle),
+        categoryId,
+        categoryTitle: categoryId ? normalizeVideoCategoryTitle(categoryTitles.get(categoryId)) : null
+      });
+    }
+  } catch (error) {
+    console.warn(
+      "YouTube Data API metadata request failed:",
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+
+  return result;
+}
+
+async function fetchYouTubeOEmbedMetadata(videoId) {
+  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const url = new URL("https://www.youtube.com/oembed");
+  url.searchParams.set("url", watchUrl);
+  url.searchParams.set("format", "json");
+
+  try {
+    const data = await fetchJsonWithTimeout(url, 2500);
+    const title = normalizeVideoTitle(data.title);
+    if (!title) return null;
+    return {
+      title,
+      author: normalizeVideoTitle(data.author_name),
+      categoryId: null,
+      categoryTitle: null
+    };
+  } catch (error) {
+    console.warn(
+      `YouTube oEmbed metadata request failed for ${videoId}:`,
+      error instanceof Error ? error.message : String(error)
+    );
+    return null;
+  }
+}
+
+async function fetchYouTubeVideosMetadata(videoIds) {
+  const now = Date.now();
+  const uniqueVideoIds = [...new Set(videoIds.map((id) => String(id || "").trim()).filter(Boolean))].slice(0, 50);
+  const result = new Map();
+  const missingVideoIds = [];
+
+  for (const videoId of uniqueVideoIds) {
+    const cached = videoMetadataCache.get(videoId);
+    if (cached && now - cached.fetchedAt < VIDEO_METADATA_CACHE_TTL) {
+      result.set(videoId, cached.metadata);
+    } else {
+      missingVideoIds.push(videoId);
+    }
+  }
+
+  const apiMetadata = await fetchYouTubeDataApiVideosMetadata(missingVideoIds);
+  for (const [videoId, metadata] of apiMetadata) {
+    videoMetadataCache.set(videoId, { fetchedAt: now, metadata });
+    result.set(videoId, metadata);
+  }
+
+  await Promise.all(
+    missingVideoIds
+      .filter((videoId) => !result.has(videoId))
+      .map(async (videoId) => {
+        const metadata = await fetchYouTubeOEmbedMetadata(videoId);
+        if (!metadata) return;
+        videoMetadataCache.set(videoId, { fetchedAt: now, metadata });
+        result.set(videoId, metadata);
+      })
+  );
+
+  return result;
+}
+
+async function fetchYouTubeVideoMetadata(videoId) {
+  return (await fetchYouTubeVideosMetadata([videoId])).get(videoId) || null;
+}
+
+function createVideoHistoryItem(videoId, addedAt, addedBy, metadata = null) {
+  const videoMetadata = typeof metadata === "string" ? { title: metadata } : metadata || {};
   return {
     videoId,
-    title: normalizeVideoTitle(title),
+    title: normalizeVideoTitle(videoMetadata.title),
+    categoryId: normalizeVideoCategoryId(videoMetadata.categoryId),
+    categoryTitle: normalizeVideoCategoryTitle(videoMetadata.categoryTitle),
     addedAt,
     addedBy
   };
@@ -114,7 +283,11 @@ function compactVideoHistory(history) {
     if (!current || item.addedAt >= current.addedAt) {
       latestByVideo.set(
         item.videoId,
-        createVideoHistoryItem(item.videoId, item.addedAt, item.addedBy || null, item.title || current?.title || null)
+        createVideoHistoryItem(item.videoId, item.addedAt, item.addedBy || null, {
+          title: item.title || current?.title || null,
+          categoryId: item.categoryId || current?.categoryId || null,
+          categoryTitle: item.categoryTitle || current?.categoryTitle || null
+        })
       );
     }
   }
@@ -239,7 +412,7 @@ app.post("/api/rooms", async (req, res) => {
     },
     hasShownInitialCountdown: false,
     countdownTimer: null,
-    videoHistory: [createVideoHistoryItem(videoId, now, nickname, videoMetadata?.title)],
+    videoHistory: [createVideoHistoryItem(videoId, now, nickname, videoMetadata)],
     participants: new Map(),
     members: new Map([[hostId, nickname]]),
     messages: []
@@ -304,20 +477,19 @@ app.get("/api/videos/popular", async (_, res) => {
     return;
   }
 
-  const videos = (
-    await Promise.all(
-      POPULAR_VIDEO_IDS.map(async (videoId) => {
-        const metadata = await fetchYouTubeVideoMetadata(videoId);
-        if (!metadata) return null;
-        return {
-          videoId,
-          title: metadata.title,
-          author: metadata.author || "",
-          thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`
-        };
-      })
-    )
-  ).filter(Boolean);
+  const metadataById = await fetchYouTubeVideosMetadata(POPULAR_VIDEO_IDS);
+  const videos = POPULAR_VIDEO_IDS.map((videoId) => {
+    const metadata = metadataById.get(videoId);
+    if (!metadata) return null;
+    return {
+      videoId,
+      title: metadata.title,
+      author: metadata.author || "",
+      categoryId: metadata.categoryId,
+      categoryTitle: metadata.categoryTitle,
+      thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`
+    };
+  }).filter(Boolean);
 
   if (videos.length) popularCache = { fetchedAt: now, videos };
   res.json({ videos });
@@ -471,7 +643,7 @@ io.on("connection", (socket) => {
     room.hasShownInitialCountdown = false;
     room.videoHistory = appendVideoHistory(
       history,
-      createVideoHistoryItem(videoId, now, participant.nickname, videoMetadata?.title)
+      createVideoHistoryItem(videoId, now, participant.nickname, videoMetadata)
     );
     room.lastActivity = now;
 
