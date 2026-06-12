@@ -2042,6 +2042,51 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, [messageText]);
 
   useEffect(() => {
+    if (!joined || !chatFocused) return;
+
+    const viewport = window.visualViewport;
+    const getKeyboardInset = () => {
+      if (!viewport) return 0;
+      const visualHeight = viewport.height || window.innerHeight;
+      const offsetTop = viewport.offsetTop || 0;
+      return Math.max(0, window.innerHeight - visualHeight - offsetTop);
+    };
+    let hasSeenKeyboard = getKeyboardInset() > 80;
+    const releaseIfKeyboardClosed = () => {
+      syncRoomViewportVars();
+      if (!viewport) return;
+      if (document.activeElement !== chatInputRef.current) return;
+      if (!window.matchMedia("(pointer: coarse), (max-width: 640px)").matches) return;
+
+      const keyboardInset = getKeyboardInset();
+      if (keyboardInset > 80) {
+        hasSeenKeyboard = true;
+        return;
+      }
+      if (!hasSeenKeyboard) return;
+
+      setChatFocused(false);
+      window.requestAnimationFrame(() => {
+        syncRoomViewportVars();
+        window.scrollTo(0, 0);
+        if (messageListRef.current) {
+          messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+        }
+      });
+    };
+
+    window.addEventListener("resize", releaseIfKeyboardClosed);
+    viewport?.addEventListener("resize", releaseIfKeyboardClosed);
+    viewport?.addEventListener("scroll", releaseIfKeyboardClosed);
+
+    return () => {
+      window.removeEventListener("resize", releaseIfKeyboardClosed);
+      viewport?.removeEventListener("resize", releaseIfKeyboardClosed);
+      viewport?.removeEventListener("scroll", releaseIfKeyboardClosed);
+    };
+  }, [chatFocused, joined]);
+
+  useEffect(() => {
     if (!joined || !nickname) return;
     if (isStaticPreview && staticVideoId) {
       const nextRoom = makeStaticRoomState(roomId, staticVideoId, selfId, nickname);

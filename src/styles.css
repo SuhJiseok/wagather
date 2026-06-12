@@ -3410,8 +3410,8 @@ input::placeholder {
     border-top: 0;
     border-radius: 0;
     box-shadow: none;
-    backdrop-filter: blur(18px) saturate(140%);
-    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   .watch-sidebar::before {
@@ -3424,8 +3424,6 @@ input::placeholder {
     pointer-events: none;
     content: "";
     background: linear-gradient(180deg, rgba(3, 4, 3, 0) 0%, rgba(7, 7, 7, 0.72) 58%, #070707 100%);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
   }
 
   .room-shell.chat-focused .watch-sidebar {
@@ -3495,7 +3493,7 @@ input::placeholder {
   }
 
   .mobile-chat-handle {
-    display: block;
+    display: none;
     flex: 0 0 auto;
     width: 44px;
     height: 5px;
@@ -3657,20 +3655,6 @@ input::placeholder {
     padding: 9px 10px 10px;
     mask-image: linear-gradient(180deg, transparent 0, rgba(0, 0, 0, 0.25) 12px, #000 36px);
     -webkit-mask-image: linear-gradient(180deg, transparent 0, rgba(0, 0, 0, 0.25) 12px, #000 36px);
-  }
-
-  .message-list::after {
-    position: absolute;
-    top: 0;
-    right: 0;
-    left: 0;
-    z-index: 2;
-    height: 34px;
-    pointer-events: none;
-    content: "";
-    background: linear-gradient(180deg, rgba(7, 7, 7, 0.98), rgba(7, 7, 7, 0));
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
   }
 
   .chat-composer {
