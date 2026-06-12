@@ -1750,6 +1750,7 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   const socketRef = useRef<Socket | null>(null);
   const playerRef = useRef<YouTubePlayer | null>(null);
+  const playerHostRef = useRef<HTMLDivElement | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const participantIdRef = useRef(getParticipantId());
@@ -1792,6 +1793,17 @@ function RoomPage({ roomId }: { roomId: string }) {
   const canControl = Boolean(self?.isHost);
   const canChangeVideo = Boolean(self?.isHost);
   const inviteUrl = isStaticPreview ? window.location.href : `${window.location.origin}/room/${roomId}`;
+  // Keep the two emoji surfaces separate:
+  // - y가 있는 반응: 사용자가 영상 위 특정 위치를 터치한 모바일 반응
+  // - y가 없는 반응: 기존 PC/채팅 빠른 이모지 풍선
+  const videoEmojiBursts = useMemo(
+    () => emojiBursts.filter((balloon) => typeof balloon.y === "number"),
+    [emojiBursts]
+  );
+  const chatEmojiBursts = useMemo(
+    () => emojiBursts.filter((balloon) => typeof balloon.y !== "number"),
+    [emojiBursts]
+  );
   const shouldShowInitialPlayOverlay = Boolean(
     canControl &&
       playerReady &&
@@ -2209,9 +2221,23 @@ function RoomPage({ roomId }: { roomId: string }) {
 
     loadYouTubeApi().then(() => {
       if (cancelled || !window.YT?.Player) return;
+      const host = playerHostRef.current;
+      if (!host) return;
+
       if (typeof playerRef.current?.destroy === "function") playerRef.current.destroy();
+      playerRef.current = null;
+      setPlayerReady(false);
+
+      // YouTube replaces the target node with an iframe, so recreate a fresh child target on every init.
+      host.replaceChildren();
+      const playerTarget = document.createElement("div");
+      playerTarget.id = `youtube-player-${roomId}-${room.videoId}-${Date.now()}`;
+      playerTarget.style.width = "100%";
+      playerTarget.style.height = "100%";
+      host.appendChild(playerTarget);
+
       initialPlayGuardRef.current = true;
-      playerRef.current = new window.YT.Player("youtube-player", {
+      playerRef.current = new window.YT.Player(playerTarget.id, {
         videoId: room.videoId,
         playerVars: {
           autoplay: 0,
@@ -2244,6 +2270,9 @@ function RoomPage({ roomId }: { roomId: string }) {
           onStateChange: (event: unknown) => {
             const data = (event as { data?: number }).data;
             handlePlayerStateChange(data);
+          },
+          onError: () => {
+            setPlayerReady(false);
           }
         }
       });
@@ -2254,9 +2283,10 @@ function RoomPage({ roomId }: { roomId: string }) {
       clearInitialPlayGuard();
       if (typeof playerRef.current?.destroy === "function") playerRef.current.destroy();
       playerRef.current = null;
+      playerHostRef.current?.replaceChildren();
       setPlayerReady(false);
     };
-  }, [room?.videoId]);
+  }, [room?.videoId, roomId]);
 
   useEffect(() => {
     if (!joined) return;
@@ -2589,7 +2619,7 @@ function RoomPage({ roomId }: { roomId: string }) {
           emoji,
           x: point ? clampRatio(point.x + spreadX / 100, 0.04, 0.96) * 100 : 8 + Math.random() * 84,
           y: point ? clampRatio(point.y + spreadY / 100, 0.08, 0.88) * 100 : undefined,
-          size: point ? 22 + Math.random() * 13 : 17 + Math.random() * 11,
+          size: point ? 16 + Math.random() * 8 : 17 + Math.random() * 11,
           duration,
           delay,
           drift: point ? -28 + Math.random() * 56 : -34 + Math.random() * 68,
@@ -3163,7 +3193,7 @@ function RoomPage({ roomId }: { roomId: string }) {
               sendSelectedReactionAt(event.clientX, event.clientY);
             }}
           >
-            <div id="youtube-player" className="youtube-player" />
+            <div className="youtube-player" ref={playerHostRef} />
             {!playerReady && (
               <div className="player-loading">
                 <Clapperboard size={28} />
@@ -3284,8 +3314,9 @@ function RoomPage({ roomId }: { roomId: string }) {
                 }}
               />
             )}
+            {/* y 좌표가 있는 모바일 화면 터치 반응만 영상 위에 렌더링한다. */}
             <div className="emoji-burst-layer" aria-hidden="true">
-              {emojiBursts.map((balloon) => (
+              {videoEmojiBursts.map((balloon) => (
                 <span
                   className={`emoji-balloon ${balloon.y === undefined ? "" : "point"}`}
                   key={balloon.id}
@@ -3493,6 +3524,26 @@ function RoomPage({ roomId }: { roomId: string }) {
                   <Send size={18} />
                 </button>
               </form>
+            </div>
+            {/* y 좌표가 없는 기존 빠른 이모지는 채팅 패널에서 올라오는 풍선으로 유지한다. */}
+            <div className="emoji-burst-layer" aria-hidden="true">
+              {chatEmojiBursts.map((balloon) => (
+                <span
+                  className="emoji-balloon"
+                  key={balloon.id}
+                  style={
+                    {
+                      left: `${balloon.x}%`,
+                      fontSize: `${balloon.size}px`,
+                      animationDuration: `${balloon.duration}ms`,
+                      animationDelay: `${balloon.delay}ms`,
+                      "--drift": `${balloon.drift}px`
+                    } as React.CSSProperties
+                  }
+                >
+                  {balloon.emoji}
+                </span>
+              ))}
             </div>
           </section>
         </aside>
