@@ -47,11 +47,9 @@ app.get("/favicon.ico", (_, res) => {
 
 const rooms = new Map();
 const VIDEO_METADATA_CACHE_TTL = 24 * 60 * 60 * 1000;
-const VIDEO_CATEGORY_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 const YOUTUBE_DATA_API_BASE = "https://www.googleapis.com/youtube/v3";
 const videoMetadataCache = new Map();
-let videoCategoryTitleCache = { fetchedAt: 0, byId: new Map() };
-const FALLBACK_YOUTUBE_CATEGORY_TITLES = new Map([
+const FIXED_YOUTUBE_CATEGORY_TITLES = new Map([
   ["1", "영화/애니메이션"],
   ["2", "자동차"],
   ["10", "음악"],
@@ -68,6 +66,7 @@ const FALLBACK_YOUTUBE_CATEGORY_TITLES = new Map([
   ["28", "과학/기술"],
   ["29", "비영리/사회운동"]
 ]);
+const FIXED_YOUTUBE_CATEGORIES = [...FIXED_YOUTUBE_CATEGORY_TITLES].map(([id, title]) => ({ id, title }));
 
 function makeRoomId() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -113,6 +112,62 @@ function normalizeVideoCategoryTitle(title) {
   return normalized ? normalized.slice(0, 80) : null;
 }
 
+function parseYouTubeDurationSeconds(duration) {
+  const match = String(duration || "").match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/);
+  if (!match) return null;
+
+  const [, days = "0", hours = "0", minutes = "0", seconds = "0"] = match;
+  const totalSeconds =
+    Number(days) * 24 * 60 * 60 + Number(hours) * 60 * 60 + Number(minutes) * 60 + Number(seconds);
+  return Number.isFinite(totalSeconds) && totalSeconds > 0 ? totalSeconds : null;
+}
+
+function formatVideoDurationLabel(totalSeconds) {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return null;
+
+  const seconds = Math.floor(totalSeconds % 60);
+  const minutes = Math.floor((totalSeconds / 60) % 60);
+  const hours = Math.floor(totalSeconds / 3600);
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+    : `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function normalizeVideoDuration(duration) {
+  const durationSeconds = parseYouTubeDurationSeconds(duration);
+  const durationLabel = formatVideoDurationLabel(durationSeconds);
+  return { durationSeconds, durationLabel };
+}
+
+function normalizeVideoViewCount(viewCount) {
+  const number = Number(viewCount);
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : null;
+}
+
+function formatVideoViewCountLabel(viewCount) {
+  if (!Number.isFinite(viewCount) || viewCount < 0) return null;
+
+  if (viewCount >= 100_000_000) {
+    const value = viewCount / 100_000_000;
+    return `조회수 ${value.toFixed(value >= 10 ? 0 : 1).replace(/\.0$/, "")}억`;
+  }
+
+  if (viewCount >= 10_000) {
+    const value = viewCount / 10_000;
+    return `조회수 ${value.toFixed(value >= 10 ? 0 : 1).replace(/\.0$/, "")}만`;
+  }
+
+  return `조회수 ${viewCount.toLocaleString("ko-KR")}회`;
+}
+
+function normalizeVideoStatistics(statistics = {}) {
+  const viewCount = normalizeVideoViewCount(statistics.viewCount);
+  return {
+    viewCount,
+    viewCountLabel: formatVideoViewCountLabel(viewCount)
+  };
+}
+
 async function fetchJsonWithTimeout(url, timeoutMs = 2500) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -126,42 +181,19 @@ async function fetchJsonWithTimeout(url, timeoutMs = 2500) {
   }
 }
 
+async function fetchYouTubeCategoryData() {
+  return {
+    byId: FIXED_YOUTUBE_CATEGORY_TITLES,
+    categories: FIXED_YOUTUBE_CATEGORIES
+  };
+}
+
 async function fetchYouTubeCategoryTitles() {
-  const now = Date.now();
-  if (videoCategoryTitleCache.byId.size && now - videoCategoryTitleCache.fetchedAt < VIDEO_CATEGORY_CACHE_TTL) {
-    return videoCategoryTitleCache.byId;
-  }
+  return (await fetchYouTubeCategoryData()).byId;
+}
 
-  const fallback = new Map(FALLBACK_YOUTUBE_CATEGORY_TITLES);
-  if (!youtubeApiKey) {
-    videoCategoryTitleCache = { fetchedAt: now, byId: fallback };
-    return fallback;
-  }
-
-  const url = new URL(`${YOUTUBE_DATA_API_BASE}/videoCategories`);
-  url.searchParams.set("part", "snippet");
-  url.searchParams.set("regionCode", youtubeCategoryRegion);
-  url.searchParams.set("hl", youtubeCategoryLanguage);
-  url.searchParams.set("key", youtubeApiKey);
-
-  try {
-    const data = await fetchJsonWithTimeout(url, 3000);
-    const byId = new Map(fallback);
-    for (const item of Array.isArray(data.items) ? data.items : []) {
-      const id = normalizeVideoCategoryId(item.id);
-      const title = normalizeVideoCategoryTitle(item.snippet?.title);
-      if (id && title) byId.set(id, title);
-    }
-    videoCategoryTitleCache = { fetchedAt: now, byId };
-    return byId;
-  } catch (error) {
-    console.warn(
-      "YouTube category metadata request failed:",
-      error instanceof Error ? error.message : String(error)
-    );
-    videoCategoryTitleCache = { fetchedAt: now, byId: fallback };
-    return fallback;
-  }
+async function fetchYouTubePopularCategories() {
+  return (await fetchYouTubeCategoryData()).categories;
 }
 
 async function fetchYouTubeDataApiVideosMetadata(videoIds) {
@@ -169,7 +201,7 @@ async function fetchYouTubeDataApiVideosMetadata(videoIds) {
   if (!youtubeApiKey || !videoIds.length) return result;
 
   const url = new URL(`${YOUTUBE_DATA_API_BASE}/videos`);
-  url.searchParams.set("part", "snippet");
+  url.searchParams.set("part", "snippet,contentDetails,statistics");
   url.searchParams.set("id", videoIds.join(","));
   url.searchParams.set("key", youtubeApiKey);
 
@@ -182,11 +214,17 @@ async function fetchYouTubeDataApiVideosMetadata(videoIds) {
       if (!id || !title) continue;
 
       const categoryId = normalizeVideoCategoryId(item.snippet?.categoryId);
+      const { durationSeconds, durationLabel } = normalizeVideoDuration(item.contentDetails?.duration);
+      const { viewCount, viewCountLabel } = normalizeVideoStatistics(item.statistics);
       result.set(id, {
         title,
         author: normalizeVideoTitle(item.snippet?.channelTitle),
         categoryId,
-        categoryTitle: categoryId ? normalizeVideoCategoryTitle(categoryTitles.get(categoryId)) : null
+        categoryTitle: categoryId ? normalizeVideoCategoryTitle(categoryTitles.get(categoryId)) : null,
+        durationSeconds,
+        durationLabel,
+        viewCount,
+        viewCountLabel
       });
     }
   } catch (error) {
@@ -213,7 +251,11 @@ async function fetchYouTubeOEmbedMetadata(videoId) {
       title,
       author: normalizeVideoTitle(data.author_name),
       categoryId: null,
-      categoryTitle: null
+      categoryTitle: null,
+      durationSeconds: null,
+      durationLabel: null,
+      viewCount: null,
+      viewCountLabel: null
     };
   } catch (error) {
     console.warn(
@@ -453,7 +495,7 @@ app.get("/api/rooms/summary", (req, res) => {
   res.json({ rooms: summaries });
 });
 
-const POPULAR_VIDEO_IDS = [
+const FALLBACK_POPULAR_VIDEO_IDS = [
   "9bZkp7q19f0",
   "gdZLi9oWNZg",
   "WMweEpGlu_U",
@@ -467,18 +509,132 @@ const POPULAR_VIDEO_IDS = [
   "60ItHLz5WEA",
   "dQw4w9WgXcQ"
 ];
-const POPULAR_CACHE_TTL = 6 * 60 * 60 * 1000;
-let popularCache = { fetchedAt: 0, videos: [] };
+const POPULAR_VIDEO_PAGE_SIZE = Math.min(50, Math.max(1, Number(process.env.YOUTUBE_POPULAR_MAX_RESULTS || 24) || 24));
+const POPULAR_CACHE_TTL = 15 * 60 * 1000;
+const popularCache = new Map();
 
-app.get("/api/videos/popular", async (_, res) => {
-  const now = Date.now();
-  if (popularCache.videos.length && now - popularCache.fetchedAt < POPULAR_CACHE_TTL) {
-    res.json({ videos: popularCache.videos });
-    return;
+function normalizePopularCategoryId(categoryId) {
+  const normalized = normalizeVideoCategoryId(categoryId);
+  return normalized && normalized !== "0" ? normalized : null;
+}
+
+function normalizeYouTubePageToken(pageToken) {
+  const normalized = String(pageToken || "").trim();
+  return /^[A-Za-z0-9_-]{1,256}$/.test(normalized) ? normalized : "";
+}
+
+function normalizeMaxDurationSeconds(maxDurationSeconds) {
+  const number = Number(maxDurationSeconds);
+  if (!Number.isFinite(number) || number <= 0) return null;
+  return Math.min(12 * 60 * 60, Math.floor(number));
+}
+
+function bestYouTubeThumbnail(videoId, thumbnails = {}) {
+  return (
+    thumbnails.medium?.url ||
+    thumbnails.high?.url ||
+    thumbnails.standard?.url ||
+    thumbnails.default?.url ||
+    `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`
+  );
+}
+
+function popularVideoFromYouTubeItem(item, categoryTitles) {
+  const videoId = String(item.id || "").trim();
+  const snippet = item.snippet || {};
+  const title = normalizeVideoTitle(snippet.localized?.title || snippet.title);
+  if (!videoId || !title) return null;
+
+  const categoryId = normalizeVideoCategoryId(snippet.categoryId);
+  const categoryTitle = categoryId ? normalizeVideoCategoryTitle(categoryTitles.get(categoryId)) : null;
+  const { durationSeconds, durationLabel } = normalizeVideoDuration(item.contentDetails?.duration);
+  const { viewCount, viewCountLabel } = normalizeVideoStatistics(item.statistics);
+  return {
+    videoId,
+    title,
+    author: normalizeVideoTitle(snippet.channelTitle) || "",
+    categoryId,
+    categoryTitle,
+    durationSeconds,
+    durationLabel,
+    viewCount,
+    viewCountLabel,
+    thumbnail: bestYouTubeThumbnail(videoId, snippet.thumbnails)
+  };
+}
+
+function matchesPopularDurationFilter(video, maxDurationSeconds) {
+  if (!maxDurationSeconds) return true;
+  if (!Number.isFinite(video.durationSeconds)) return false;
+  return video.durationSeconds <= maxDurationSeconds;
+}
+
+function cachePopularVideoMetadata(videos, fetchedAt = Date.now()) {
+  for (const video of videos) {
+    videoMetadataCache.set(video.videoId, {
+      fetchedAt,
+      metadata: {
+        title: video.title,
+        author: video.author,
+        categoryId: video.categoryId,
+        categoryTitle: video.categoryTitle,
+        durationSeconds: video.durationSeconds,
+        durationLabel: video.durationLabel,
+        viewCount: video.viewCount,
+        viewCountLabel: video.viewCountLabel
+      }
+    });
   }
+}
 
-  const metadataById = await fetchYouTubeVideosMetadata(POPULAR_VIDEO_IDS);
-  const videos = POPULAR_VIDEO_IDS.map((videoId) => {
+async function fetchYouTubeMostPopularVideos(categoryId = null, pageToken = "", maxDurationSeconds = null) {
+  if (!youtubeApiKey) return { videos: [], nextPageToken: "" };
+
+  try {
+    const categoryTitles = await fetchYouTubeCategoryTitles();
+    const videos = [];
+    let nextPageToken = pageToken;
+    let lastNextPageToken = "";
+    const hasDurationFilter = Boolean(maxDurationSeconds);
+    const maxAttempts = hasDurationFilter ? 4 : 1;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const url = new URL(`${YOUTUBE_DATA_API_BASE}/videos`);
+      url.searchParams.set("part", "snippet,contentDetails,statistics");
+      url.searchParams.set("chart", "mostPopular");
+      url.searchParams.set("regionCode", youtubeCategoryRegion);
+      url.searchParams.set("hl", youtubeCategoryLanguage);
+      url.searchParams.set("maxResults", String(POPULAR_VIDEO_PAGE_SIZE));
+      url.searchParams.set("key", youtubeApiKey);
+      if (categoryId) url.searchParams.set("videoCategoryId", categoryId);
+      if (nextPageToken) url.searchParams.set("pageToken", nextPageToken);
+
+      const data = await fetchJsonWithTimeout(url, 4000);
+      const pageVideos = (Array.isArray(data.items) ? data.items : [])
+        .map((item) => popularVideoFromYouTubeItem(item, categoryTitles))
+        .filter(Boolean);
+
+      cachePopularVideoMetadata(pageVideos);
+      videos.push(...pageVideos.filter((video) => matchesPopularDurationFilter(video, maxDurationSeconds)));
+
+      lastNextPageToken = normalizeYouTubePageToken(data.nextPageToken);
+      nextPageToken = lastNextPageToken;
+      if (!hasDurationFilter || videos.length >= POPULAR_VIDEO_PAGE_SIZE || !nextPageToken) break;
+    }
+
+    return { videos: videos.slice(0, POPULAR_VIDEO_PAGE_SIZE), nextPageToken: lastNextPageToken };
+  } catch (error) {
+    console.warn(
+      "YouTube popular videos request failed:",
+      error instanceof Error ? error.message : String(error)
+    );
+    return { videos: [], nextPageToken: "" };
+  }
+}
+
+async function fetchFallbackPopularVideos(categoryId = null, maxDurationSeconds = null) {
+  const metadataById = await fetchYouTubeVideosMetadata(FALLBACK_POPULAR_VIDEO_IDS);
+  return FALLBACK_POPULAR_VIDEO_IDS.map((videoId) => {
     const metadata = metadataById.get(videoId);
     if (!metadata) return null;
     return {
@@ -487,12 +643,53 @@ app.get("/api/videos/popular", async (_, res) => {
       author: metadata.author || "",
       categoryId: metadata.categoryId,
       categoryTitle: metadata.categoryTitle,
+      durationSeconds: metadata.durationSeconds,
+      durationLabel: metadata.durationLabel,
+      viewCount: metadata.viewCount,
+      viewCountLabel: metadata.viewCountLabel,
       thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`
     };
-  }).filter(Boolean);
+  })
+    .filter(Boolean)
+    .filter((video) => !categoryId || video.categoryId === categoryId)
+    .filter((video) => matchesPopularDurationFilter(video, maxDurationSeconds));
+}
 
-  if (videos.length) popularCache = { fetchedAt: now, videos };
-  res.json({ videos });
+app.get("/api/videos/popular", async (req, res) => {
+  const now = Date.now();
+  const categoryId = normalizePopularCategoryId(req.query.categoryId);
+  const pageToken = normalizeYouTubePageToken(req.query.pageToken);
+  const maxDurationSeconds = normalizeMaxDurationSeconds(req.query.maxDurationSeconds);
+  const cacheKey = `${categoryId || "all"}:${maxDurationSeconds || "any"}:${pageToken || "first"}`;
+  const cached = popularCache.get(cacheKey);
+  if (cached && now - cached.fetchedAt < POPULAR_CACHE_TTL) {
+    res.json(cached.payload);
+    return;
+  }
+
+  const categories = await fetchYouTubePopularCategories();
+  const popularResult = await fetchYouTubeMostPopularVideos(categoryId, pageToken, maxDurationSeconds);
+  let videos = popularResult.videos;
+  let nextPageToken = popularResult.nextPageToken;
+  let source = "youtube";
+  if (!videos.length && !pageToken) {
+    videos = await fetchFallbackPopularVideos(categoryId, maxDurationSeconds);
+    nextPageToken = "";
+    source = "fallback";
+  }
+
+  const payload = {
+    videos,
+    categories,
+    source,
+    regionCode: youtubeCategoryRegion,
+    categoryId: categoryId || "all",
+    maxDurationSeconds,
+    nextPageToken,
+    hasMore: Boolean(nextPageToken)
+  };
+  if (videos.length || categories.length) popularCache.set(cacheKey, { fetchedAt: now, payload });
+  res.json(payload);
 });
 
 io.on("connection", (socket) => {

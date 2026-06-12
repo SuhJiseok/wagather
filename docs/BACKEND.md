@@ -19,9 +19,10 @@ YouTube Data API 키는 사용자에게 받지 않고 서버 환경변수로 관
 YOUTUBE_API_KEY=your_youtube_data_api_key
 YOUTUBE_CATEGORY_REGION=KR
 YOUTUBE_CATEGORY_LANGUAGE=ko
+YOUTUBE_POPULAR_MAX_RESULTS=24
 ```
 
-`YOUTUBE_API_KEY`가 없거나 Data API 요청이 실패하면 기존처럼 YouTube oEmbed로 제목과 채널명만 조회합니다. 카테고리 ID/이름은 Data API가 성공했을 때만 영상 히스토리와 인기 영상 응답에 포함됩니다.
+`YOUTUBE_API_KEY`가 있으면 YouTube Data API의 실제 인기 영상 차트와 카테고리별 인기 영상을 조회합니다. 카테고리 필터 목록은 서버의 고정값을 사용합니다. 인기영상 API는 `nextPageToken`을 함께 내려주며, 프론트엔드는 스크롤 시 다음 묶음을 이어 불러옵니다. `YOUTUBE_POPULAR_MAX_RESULTS`는 한 번에 가져오는 영상 수입니다. `YOUTUBE_API_KEY`가 없거나 Data API 요청이 실패하면 기존처럼 YouTube oEmbed 또는 내장 샘플 목록으로 대체합니다. 카테고리 ID/이름은 Data API가 성공했을 때 영상 히스토리와 인기 영상 응답에 포함됩니다.
 
 ## 주요 API
 

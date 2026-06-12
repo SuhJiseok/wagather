@@ -39,9 +39,10 @@ cp .env.example .env
 YOUTUBE_API_KEY=your_youtube_data_api_key
 YOUTUBE_CATEGORY_REGION=KR
 YOUTUBE_CATEGORY_LANGUAGE=ko
+YOUTUBE_POPULAR_MAX_RESULTS=24
 ```
 
-API 키가 없거나 요청에 실패하면 기존처럼 YouTube oEmbed로 제목과 채널명만 가져오며, 카테고리 배지는 표시하지 않습니다.
+API 키가 있으면 실제 YouTube 인기 영상 차트와 카테고리별 인기 영상을 가져옵니다. 카테고리 필터 목록은 서버의 고정값을 사용합니다. 인기영상 페이지는 스크롤 시 다음 묶음을 이어 불러오며, `YOUTUBE_POPULAR_MAX_RESULTS`는 한 번에 가져오는 영상 수입니다. API 키가 없거나 요청에 실패하면 기존처럼 YouTube oEmbed 또는 내장 샘플 목록으로 대체합니다.
 
 ## 문서
 

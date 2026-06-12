@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, Socket } from "socket.io-client";
 import {
   ChevronRight,
   Clapperboard,
+  Clock3,
   Copy,
   Flame,
   History,
@@ -143,12 +144,26 @@ type PopularVideo = {
   author: string;
   categoryId?: string | null;
   categoryTitle?: string | null;
+  durationSeconds?: number | null;
+  durationLabel?: string | null;
+  viewCount?: number | null;
+  viewCountLabel?: string | null;
   thumbnail: string;
 };
+
+type DurationFilter = "all" | "short";
 
 type PopularCategory = {
   id: string;
   title: string;
+};
+
+type PopularVideosResponse = {
+  videos?: PopularVideo[];
+  categories?: PopularCategory[];
+  maxDurationSeconds?: number | null;
+  nextPageToken?: string | null;
+  hasMore?: boolean;
 };
 
 type RoomSummary = {
@@ -174,6 +189,25 @@ const RESUME_MAX_ENTRIES = 50;
 const ROOM_VISUAL_HEIGHT_VAR = "--room-visual-height";
 const ROOM_KEYBOARD_INSET_VAR = "--room-keyboard-inset";
 const ROOM_VIEWPORT_OFFSET_VAR = "--room-viewport-offset";
+const SHORT_VIDEO_MAX_SECONDS = 180;
+
+const FIXED_POPULAR_CATEGORIES: PopularCategory[] = [
+  { id: "1", title: "영화/애니메이션" },
+  { id: "2", title: "자동차" },
+  { id: "10", title: "음악" },
+  { id: "15", title: "반려동물/동물" },
+  { id: "17", title: "스포츠" },
+  { id: "19", title: "여행/이벤트" },
+  { id: "20", title: "게임" },
+  { id: "22", title: "인물/블로그" },
+  { id: "23", title: "코미디" },
+  { id: "24", title: "엔터테인먼트" },
+  { id: "25", title: "뉴스/정치" },
+  { id: "26", title: "노하우/스타일" },
+  { id: "27", title: "교육" },
+  { id: "28", title: "과학/기술" },
+  { id: "29", title: "비영리/사회운동" }
+];
 
 function syncRoomViewportVars() {
   if (typeof window === "undefined") return;
@@ -354,15 +388,21 @@ function categoryPillClassName(categoryId?: string | null) {
   return `category-pill ${categoryToneClassName(categoryId)}`;
 }
 
-function popularCategories(videos: PopularVideo[] | null): PopularCategory[] {
-  const byId = new Map<string, PopularCategory>();
-  for (const video of videos || []) {
-    const id = String(video.categoryId || "").trim();
-    const title = String(video.categoryTitle || "").trim();
-    if (!id || !title || byId.has(id)) continue;
-    byId.set(id, { id, title });
+function mergePopularVideos(current: PopularVideo[], next: PopularVideo[]) {
+  const byId = new Map(current.map((video) => [video.videoId, video]));
+  for (const video of next) {
+    if (!byId.has(video.videoId)) byId.set(video.videoId, video);
   }
-  return [...byId.values()].sort((a, b) => a.title.localeCompare(b.title, "ko"));
+  return [...byId.values()];
+}
+
+function filterPopularByDuration(videos: PopularVideo[], durationFilter: DurationFilter) {
+  if (durationFilter === "all") return videos;
+  return videos.filter((video) => {
+    if (!Number.isFinite(video.durationSeconds)) return false;
+    const durationSeconds = Number(video.durationSeconds);
+    return durationSeconds <= SHORT_VIDEO_MAX_SECONDS;
+  });
 }
 
 function roomActionWidth(label: string) {
@@ -374,13 +414,22 @@ function navigate(to: string) {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
-function popularPath(categoryId: string) {
-  return categoryId === "all" ? "/popular" : `/popular?category=${encodeURIComponent(categoryId)}`;
+function popularPath(categoryId: string, options: { durationFilter?: DurationFilter } = {}) {
+  const params = new URLSearchParams();
+  if (categoryId !== "all") params.set("category", categoryId);
+  if (options.durationFilter && options.durationFilter !== "all") params.set("duration", options.durationFilter);
+  const query = params.toString();
+  return query ? `/popular?${query}` : "/popular";
 }
 
 function currentPopularCategory() {
   const category = new URLSearchParams(window.location.search).get("category");
   return category?.trim() || "all";
+}
+
+function currentPopularDurationFilter(): DurationFilter {
+  const duration = new URLSearchParams(window.location.search).get("duration");
+  return duration === "short" ? "short" : "all";
 }
 
 function useHorizontalWheel<T extends HTMLElement>() {
@@ -1166,35 +1215,116 @@ function ChatsPage() {
   );
 }
 
-function usePopularVideos() {
-  const [popular, setPopular] = useState<PopularVideo[] | null>(null);
+function usePopularVideos(categoryId = "all", durationFilter: DurationFilter = "all") {
+  const normalizedCategory = categoryId === "all" ? "all" : categoryId;
+  const normalizedDurationFilter: DurationFilter =
+    durationFilter === "short" ? "short" : "all";
+  const categoryRef = useRef(normalizedCategory);
+  const durationFilterRef = useRef(normalizedDurationFilter);
+  const [state, setState] = useState<{
+    videos: PopularVideo[] | null;
+    categories: PopularCategory[];
+    nextPageToken: string;
+    hasMore: boolean;
+    loadingMore: boolean;
+  }>({
+    videos: null,
+    categories: FIXED_POPULAR_CATEGORIES,
+    nextPageToken: "",
+    hasMore: false,
+    loadingMore: false
+  });
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/videos/popular")
+    categoryRef.current = normalizedCategory;
+    durationFilterRef.current = normalizedDurationFilter;
+    const fallbackVideos =
+      normalizedCategory === "all" ? FALLBACK_POPULAR : FALLBACK_POPULAR.filter((video) => video.categoryId === normalizedCategory);
+    const filteredFallbackVideos = filterPopularByDuration(fallbackVideos, normalizedDurationFilter);
+    const params = new URLSearchParams();
+    if (normalizedCategory !== "all") params.set("categoryId", normalizedCategory);
+    if (normalizedDurationFilter === "short") params.set("maxDurationSeconds", String(SHORT_VIDEO_MAX_SECONDS));
+    const query = params.toString() ? `?${params.toString()}` : "";
+
+    setState((current) => ({
+      videos: null,
+      categories: current.categories.length ? current.categories : FIXED_POPULAR_CATEGORIES,
+      nextPageToken: "",
+      hasMore: false,
+      loadingMore: false
+    }));
+
+    fetch(`/api/videos/popular${query}`)
       .then((response) => {
         const contentType = response.headers.get("content-type") || "";
         if (!response.ok || !contentType.includes("application/json")) throw new Error("unavailable");
         return response.json();
       })
-      .then((data: { videos: PopularVideo[] }) => {
-        if (!cancelled) setPopular(data.videos?.length ? data.videos : FALLBACK_POPULAR);
+      .then((data: PopularVideosResponse) => {
+        if (cancelled) return;
+        const nextPageToken = String(data.nextPageToken || "");
+        const responseVideos = filterPopularByDuration(data.videos || [], normalizedDurationFilter);
+        setState({
+          videos: responseVideos.length ? responseVideos : filteredFallbackVideos,
+          categories: data.categories?.length ? data.categories : FIXED_POPULAR_CATEGORIES,
+          nextPageToken,
+          hasMore: Boolean(data.hasMore && nextPageToken),
+          loadingMore: false
+        });
       })
       .catch(() => {
-        if (!cancelled) setPopular(FALLBACK_POPULAR);
+        if (!cancelled) {
+          setState({
+            videos: filteredFallbackVideos,
+            categories: FIXED_POPULAR_CATEGORIES,
+            nextPageToken: "",
+            hasMore: false,
+            loadingMore: false
+          });
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [normalizedCategory, normalizedDurationFilter]);
 
-  return popular;
-}
+  const loadMore = useCallback(() => {
+    if (!state.hasMore || state.loadingMore || !state.nextPageToken) return;
 
-function filterPopularVideos(videos: PopularVideo[] | null, activeCategory: string) {
-  if (!videos) return null;
-  if (activeCategory === "all") return videos;
-  return videos.filter((video) => video.categoryId === activeCategory);
+    const requestCategory = normalizedCategory;
+    const requestDurationFilter = normalizedDurationFilter;
+    const params = new URLSearchParams();
+    if (requestCategory !== "all") params.set("categoryId", requestCategory);
+    if (requestDurationFilter === "short") params.set("maxDurationSeconds", String(SHORT_VIDEO_MAX_SECONDS));
+    params.set("pageToken", state.nextPageToken);
+
+    setState((current) => ({ ...current, loadingMore: true }));
+    fetch(`/api/videos/popular?${params.toString()}`)
+      .then((response) => {
+        const contentType = response.headers.get("content-type") || "";
+        if (!response.ok || !contentType.includes("application/json")) throw new Error("unavailable");
+        return response.json();
+      })
+      .then((data: PopularVideosResponse) => {
+        if (categoryRef.current !== requestCategory || durationFilterRef.current !== requestDurationFilter) return;
+        const nextPageToken = String(data.nextPageToken || "");
+        const responseVideos = filterPopularByDuration(data.videos || [], requestDurationFilter);
+        setState((current) => ({
+          videos: mergePopularVideos(current.videos || [], responseVideos),
+          categories: data.categories?.length ? data.categories : current.categories,
+          nextPageToken,
+          hasMore: Boolean(data.hasMore && nextPageToken),
+          loadingMore: false
+        }));
+      })
+      .catch(() => {
+        if (categoryRef.current !== requestCategory || durationFilterRef.current !== requestDurationFilter) return;
+        setState((current) => ({ ...current, loadingMore: false, hasMore: false, nextPageToken: "" }));
+      });
+  }, [normalizedCategory, normalizedDurationFilter, state.hasMore, state.loadingMore, state.nextPageToken]);
+
+  return { ...state, loadMore };
 }
 
 function CategoryFilter({
@@ -1254,6 +1384,7 @@ function PopularVideoCard({
         {showCategoryBadge && video.categoryTitle && (
           <span className={categoryPillClassName(video.categoryId)}>{video.categoryTitle}</span>
         )}
+        {video.durationLabel && <span className="video-duration-pill">{video.durationLabel}</span>}
         <span className="watch-overlay" aria-hidden="true">
           <span>
             <Play size={14} />
@@ -1265,6 +1396,14 @@ function PopularVideoCard({
         <strong>{video.title}</strong>
         <div className="video-card-meta">
           <span>{video.author}</span>
+          {video.viewCountLabel && (
+            <>
+              <span className="video-meta-separator" aria-hidden="true">
+                ·
+              </span>
+              <span className="video-view-count">{video.viewCountLabel}</span>
+            </>
+          )}
         </div>
       </div>
     </button>
@@ -1318,11 +1457,10 @@ function PopularVideoCollection({
 
 function HomePage() {
   const [createModalUrl, setCreateModalUrl] = useState<string | null>(null);
-  const popular = usePopularVideos();
+  const { videos: popular, categories } = usePopularVideos();
   const myRooms = useMyRooms();
   const railRooms = myRooms.entries.slice(0, 8);
   const roomRailRef = useHorizontalWheel<HTMLDivElement>();
-  const categories = useMemo(() => popularCategories(popular), [popular]);
 
   async function startWatchTogether(video: PopularVideo) {
     const nickname = (localStorage.getItem(STORAGE_NICKNAME) || "").trim();
@@ -1423,19 +1561,46 @@ function HomePage() {
 function PopularPage() {
   const [createModalUrl, setCreateModalUrl] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState(currentPopularCategory);
-  const popular = usePopularVideos();
-  const categories = useMemo(() => popularCategories(popular), [popular]);
-  const filteredPopular = useMemo(() => filterPopularVideos(popular, activeCategory), [activeCategory, popular]);
+  const [durationFilter, setDurationFilter] = useState<DurationFilter>(currentPopularDurationFilter);
+  const { videos: popular, categories, hasMore, loadingMore, loadMore } = usePopularVideos(
+    activeCategory,
+    durationFilter
+  );
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const syncCategory = () => setActiveCategory(currentPopularCategory());
-    window.addEventListener("popstate", syncCategory);
-    return () => window.removeEventListener("popstate", syncCategory);
+    const syncFilters = () => {
+      setActiveCategory(currentPopularCategory());
+      setDurationFilter(currentPopularDurationFilter());
+    };
+    window.addEventListener("popstate", syncFilters);
+    return () => window.removeEventListener("popstate", syncFilters);
   }, []);
+
+  useEffect(() => {
+    const target = loadMoreRef.current;
+    if (!target || !hasMore) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) loadMore();
+      },
+      { rootMargin: "600px 0px" }
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [hasMore, loadMore]);
 
   function selectCategory(categoryId: string) {
     setActiveCategory(categoryId);
-    navigate(popularPath(categoryId));
+    navigate(popularPath(categoryId, { durationFilter }));
+  }
+
+  function toggleShortFilter() {
+    const next: DurationFilter = durationFilter === "short" ? "all" : "short";
+    setDurationFilter(next);
+    navigate(popularPath(activeCategory, { durationFilter: next }));
   }
 
   async function startWatchTogether(video: PopularVideo) {
@@ -1462,26 +1627,50 @@ function PopularPage() {
       </header>
 
       <CategoryFilter categories={categories} activeCategory={activeCategory} onChange={selectCategory} />
+      <div className="popular-filter-tools" aria-label="영상 길이 필터">
+        <button
+          className={`duration-filter-chip ${durationFilter === "short" ? "active" : ""}`}
+          type="button"
+          aria-pressed={durationFilter === "short"}
+          onClick={toggleShortFilter}
+        >
+          <Clock3 size={14} />
+          Short
+        </button>
+      </div>
 
-      {popular !== null && popular.length === 0 ? (
+      {activeCategory === "all" && popular !== null && popular.length === 0 ? (
         <div className="empty-card glass-panel">
           <Flame size={26} />
           <strong>추천 영상을 불러오지 못했어요</strong>
           <p>잠시 후 다시 시도하거나, 새 방 만들기로 직접 유튜브 링크를 붙여보세요.</p>
         </div>
-      ) : filteredPopular !== null && filteredPopular.length === 0 ? (
+      ) : activeCategory !== "all" && popular !== null && popular.length === 0 ? (
         <div className="empty-card glass-panel">
           <Flame size={26} />
-          <strong>이 카테고리 영상이 아직 없어요</strong>
-          <p>다른 카테고리를 선택해 보세요.</p>
+          <strong>
+            {durationFilter === "all" ? "이 카테고리 영상이 아직 없어요" : "3분 이하 영상이 아직 없어요"}
+          </strong>
+          <p>{durationFilter === "all" ? "다른 카테고리를 선택해 보세요." : "Short를 끄고 다시 확인해 보세요."}</p>
         </div>
       ) : (
         <PopularVideoCollection
-          videos={filteredPopular}
+          videos={popular}
           variant="grid"
           onSelect={startWatchTogether}
           showCategoryBadge={activeCategory === "all"}
         />
+      )}
+
+      {popular !== null && popular.length > 0 && (hasMore || loadingMore) && (
+        <div className="popular-load-more" ref={loadMoreRef} aria-live="polite">
+          {loadingMore && (
+            <span className="popular-load-status">
+              <span className="popular-load-spinner" aria-hidden="true" />
+              인기 영상 불러오는 중
+            </span>
+          )}
+        </div>
       )}
 
       {createModalUrl !== null && <CreateRoomModal initialUrl={createModalUrl} onClose={() => setCreateModalUrl(null)} />}
