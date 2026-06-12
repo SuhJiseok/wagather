@@ -3404,11 +3404,28 @@ input::placeholder {
     height: 100%;
     min-height: 0;
     overflow: hidden;
-    background: #070707;
+    isolation: isolate;
+    background: linear-gradient(180deg, rgba(7, 7, 7, 0.58) 0, #070707 56px);
     border: 0;
-    border-top: 1px solid rgba(244, 240, 232, 0.16);
-    border-radius: 24px 24px 0 0;
-    box-shadow: 0 -18px 42px rgba(0, 0, 0, 0.42);
+    border-top: 0;
+    border-radius: 0;
+    box-shadow: none;
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+  }
+
+  .watch-sidebar::before {
+    position: absolute;
+    top: -22px;
+    right: 0;
+    left: 0;
+    z-index: 0;
+    height: 70px;
+    pointer-events: none;
+    content: "";
+    background: linear-gradient(180deg, rgba(3, 4, 3, 0) 0%, rgba(7, 7, 7, 0.72) 58%, #070707 100%);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
   }
 
   .room-shell.chat-focused .watch-sidebar {
@@ -3423,6 +3440,8 @@ input::placeholder {
   .chat-section,
   .room-shell.chat-focused .chat-section,
   .room-shell.chat-focused .sidebar-section {
+    position: relative;
+    z-index: 1;
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;
@@ -3629,12 +3648,29 @@ input::placeholder {
   }
 
   .message-list {
+    position: relative;
     flex: 1 1 auto;
     height: auto;
     min-height: 0;
     gap: 4px;
     overflow-y: auto;
     padding: 9px 10px 10px;
+    mask-image: linear-gradient(180deg, transparent 0, rgba(0, 0, 0, 0.25) 12px, #000 36px);
+    -webkit-mask-image: linear-gradient(180deg, transparent 0, rgba(0, 0, 0, 0.25) 12px, #000 36px);
+  }
+
+  .message-list::after {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    z-index: 2;
+    height: 34px;
+    pointer-events: none;
+    content: "";
+    background: linear-gradient(180deg, rgba(7, 7, 7, 0.98), rgba(7, 7, 7, 0));
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
   }
 
   .chat-composer {
