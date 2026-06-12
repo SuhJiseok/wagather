@@ -437,6 +437,7 @@ a.brand-mark {
   padding: 10px 10px 14px;
   color: var(--text);
   text-align: left;
+  box-shadow: none;
   transition:
     transform 160ms ease,
     background 160ms ease;
@@ -1309,6 +1310,7 @@ a.brand-mark {
   display: flex;
   align-items: center;
   background: var(--glass-bg);
+  box-shadow: none;
   transition:
     transform 160ms ease,
     background 160ms ease;
@@ -1327,9 +1329,7 @@ a.brand-mark {
 .room-card.live {
   position: relative;
   border-color: rgba(201, 242, 95, 0.2);
-  box-shadow:
-    0 0 22px rgba(201, 242, 95, 0.07),
-    var(--glass-shadow);
+  box-shadow: none;
 }
 
 .live-ring {

@@ -498,36 +498,67 @@ function useMyRooms() {
   const [entries, setEntries] = useState<JoinedRoomEntry[]>(loadJoinedRooms);
   const [summaries, setSummaries] = useState<Record<string, RoomSummary>>({});
   const [loading, setLoading] = useState(() => loadJoinedRooms().some((entry) => !entry.isPreview));
+  const summaryIdsKey = useMemo(
+    () =>
+      entries
+        .filter((entry) => !entry.isPreview)
+        .map((entry) => entry.roomId)
+        .join(","),
+    [entries]
+  );
 
   useEffect(() => {
-    const ids = entries.filter((entry) => !entry.isPreview).map((entry) => entry.roomId);
-    if (!ids.length) {
+    if (!summaryIdsKey) {
+      setSummaries({});
       setLoading(false);
       return;
     }
 
     let cancelled = false;
-    fetch(`/api/rooms/summary?ids=${encodeURIComponent(ids.join(","))}`)
-      .then((response) => {
-        const contentType = response.headers.get("content-type") || "";
-        if (!response.ok || !contentType.includes("application/json")) throw new Error("unavailable");
-        return response.json();
-      })
-      .then((data: { rooms: RoomSummary[] }) => {
-        if (cancelled) return;
-        const next: Record<string, RoomSummary> = {};
-        for (const summary of data.rooms || []) next[summary.id] = summary;
-        setSummaries(next);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    let controller: AbortController | null = null;
+
+    const fetchSummaries = (showLoading = false) => {
+      controller?.abort();
+      const requestController = new AbortController();
+      controller = requestController;
+      if (showLoading) setLoading(true);
+
+      fetch(`/api/rooms/summary?ids=${encodeURIComponent(summaryIdsKey)}`, { signal: requestController.signal })
+        .then((response) => {
+          const contentType = response.headers.get("content-type") || "";
+          if (!response.ok || !contentType.includes("application/json")) throw new Error("unavailable");
+          return response.json();
+        })
+        .then((data: { rooms: RoomSummary[] }) => {
+          if (cancelled || requestController.signal.aborted) return;
+          const next: Record<string, RoomSummary> = {};
+          for (const summary of data.rooms || []) next[summary.id] = summary;
+          setSummaries(next);
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled && !requestController.signal.aborted) setLoading(false);
+        });
+    };
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") fetchSummaries();
+    };
+    const refreshOnFocus = () => fetchSummaries();
+
+    fetchSummaries(true);
+    const interval = window.setInterval(() => fetchSummaries(), 5000);
+    window.addEventListener("focus", refreshOnFocus);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
 
     return () => {
       cancelled = true;
+      controller?.abort();
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshOnFocus);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [entries]);
+  }, [summaryIdsKey]);
 
   function removeEntry(roomId: string) {
     saveJoinedRooms(loadJoinedRooms().filter((item) => item.roomId !== roomId));
