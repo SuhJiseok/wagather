@@ -46,6 +46,7 @@ app.get("/favicon.ico", (_, res) => {
 });
 
 const rooms = new Map();
+const PARTICIPANT_DISCONNECT_GRACE_MS = 15 * 1000;
 const VIDEO_METADATA_CACHE_TTL = 24 * 60 * 60 * 1000;
 const YOUTUBE_DATA_API_BASE = "https://www.googleapis.com/youtube/v3";
 const videoMetadataCache = new Map();
@@ -704,15 +705,24 @@ io.on("connection", (socket) => {
     }
 
     const displayName = String(nickname || "게스트").trim().slice(0, 20) || "게스트";
-    const participant = {
+    const existingParticipant = room.participants.get(id);
+    if (existingParticipant?.disconnectTimer) {
+      clearTimeout(existingParticipant.disconnectTimer);
+      existingParticipant.disconnectTimer = null;
+    }
+    const participant = existingParticipant || {
       id,
       socketId: socket.id,
       nickname: displayName,
       currentTime: 0,
       playerState: "paused",
       localMode: "synced",
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      disconnectTimer: null
     };
+    participant.socketId = socket.id;
+    participant.nickname = displayName;
+    participant.updatedAt = Date.now();
 
     room.participants.set(id, participant);
     if (!room.members) room.members = new Map();
@@ -726,7 +736,7 @@ io.on("connection", (socket) => {
     socket.join(roomId);
 
     socket.emit("room-state", serializeRoom(room));
-    socket.to(roomId).emit("system-message", `${displayName}님이 들어왔어요.`);
+    if (!existingParticipant) socket.to(roomId).emit("system-message", `${displayName}님이 들어왔어요.`);
     emitRoom(room);
   });
 
@@ -947,12 +957,19 @@ io.on("connection", (socket) => {
     if (!room || !participantId) return;
 
     const participant = room.participants.get(participantId);
-    room.participants.delete(participantId);
-    room.controlId = room.hostId;
-    room.lastActivity = Date.now();
+    if (!participant || participant.socketId !== socket.id) return;
 
-    if (participant) socket.to(roomId).emit("system-message", `${participant.nickname}님이 나갔어요.`);
-    emitRoom(room);
+    if (participant.disconnectTimer) clearTimeout(participant.disconnectTimer);
+    participant.disconnectTimer = setTimeout(() => {
+      const currentParticipant = room.participants.get(participantId);
+      if (!currentParticipant || currentParticipant.socketId !== socket.id) return;
+
+      room.participants.delete(participantId);
+      room.controlId = room.hostId;
+      room.lastActivity = Date.now();
+      socket.to(roomId).emit("system-message", `${participant.nickname}님이 나갔어요.`);
+      emitRoom(room);
+    }, PARTICIPANT_DISCONNECT_GRACE_MS);
   });
 });
 

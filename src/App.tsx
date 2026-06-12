@@ -2051,8 +2051,12 @@ function RoomPage({ roomId }: { roomId: string }) {
     }
 
     const socket = io();
+    const joinRoom = () => {
+      socket.emit("join-room", { roomId, participantId: selfId, nickname });
+    };
     socketRef.current = socket;
-    socket.emit("join-room", { roomId, participantId: selfId, nickname });
+    socket.on("connect", joinRoom);
+    if (socket.connected) joinRoom();
 
     socket.on("room-state", (nextRoom: RoomState) => {
       setRoom(nextRoom);
@@ -2672,6 +2676,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     window.requestAnimationFrame(pinRoom);
     window.setTimeout(pinRoom, 80);
     window.setTimeout(pinRoom, 240);
+    window.setTimeout(pinRoom, 520);
   }
 
   function releaseChatFocus() {

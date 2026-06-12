@@ -3173,14 +3173,41 @@ input::placeholder {
   .create-room-modal {
     width: min(380px, 100%);
     max-height: calc(100% - 36px);
-    padding: 22px 18px;
+    gap: 10px;
+    padding: 18px 16px;
+    overflow: hidden;
     border-radius: 22px;
     border-bottom: 1px solid var(--glass-border);
     animation-name: prompt-in;
   }
 
+  .create-room-modal.scroll-area-y {
+    overflow-y: hidden;
+  }
+
   .create-room-modal .modal-handle {
     display: none;
+  }
+
+  .create-room-modal .panel-heading {
+    gap: 3px;
+    padding-right: 36px;
+  }
+
+  .create-room-modal .panel-heading p {
+    font-size: 12px;
+  }
+
+  .create-room-modal .panel-heading h2 {
+    font-size: 18px;
+  }
+
+  .create-room-modal .room-form {
+    gap: 10px;
+  }
+
+  .create-room-modal .primary-button {
+    min-height: 46px;
   }
 
   .modal-handle {
@@ -3214,6 +3241,20 @@ input::placeholder {
   .modal-card .primary-button {
     width: 100%;
     min-height: 52px;
+  }
+
+  .create-room-modal label {
+    gap: 5px;
+    font-size: 13px;
+  }
+
+  .create-room-modal .input-wrap {
+    gap: 8px;
+    padding: 0 12px;
+  }
+
+  .create-room-modal input {
+    min-height: 44px;
   }
 
   .history-modal {
@@ -3370,15 +3411,13 @@ input::placeholder {
     box-shadow: 0 -18px 42px rgba(0, 0, 0, 0.42);
   }
 
-  .room-shell.chat-focused {
-    --mobile-chat-overlap: clamp(56px, 15vw, 86px);
-  }
-
   .room-shell.chat-focused .watch-sidebar {
     z-index: 3;
-    height: calc(100% + var(--mobile-chat-overlap));
-    margin-top: calc(var(--mobile-chat-overlap) * -1);
-    border-radius: 22px 22px 0 0;
+    align-self: end;
+    height: auto;
+    margin-top: 0;
+    border-radius: 0;
+    box-shadow: none;
   }
 
   .chat-section,
@@ -3390,6 +3429,50 @@ input::placeholder {
     min-height: 0;
     overflow: hidden;
     padding: 0;
+  }
+
+  .room-shell.chat-focused .room-header,
+  .room-shell.chat-focused .mobile-chat-handle,
+  .room-shell.chat-focused .mobile-chat-header,
+  .room-shell.chat-focused .message-list,
+  .room-shell.chat-focused .emoji-row,
+  .room-shell.chat-focused .watch-sidebar .pause-prompt {
+    display: none;
+  }
+
+  .room-shell.chat-focused .watch-layout {
+    flex: 1 1 auto;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .room-shell.chat-focused .player-frame {
+    max-height: min(42dvh, calc(var(--room-visual-height, 100dvh) - 64px));
+  }
+
+  .room-shell.chat-focused .chat-section {
+    flex: 0 0 auto;
+  }
+
+  .room-shell.chat-focused .chat-composer {
+    gap: 0;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .room-shell.chat-focused .chat-form {
+    grid-template-columns: minmax(0, 1fr) 42px;
+    gap: 6px;
+  }
+
+  .room-shell.chat-focused .chat-form .composer-avatar,
+  .room-shell.chat-focused .chat-form .composer-emoji-button {
+    display: none;
+  }
+
+  .room-shell.chat-focused .chat-form textarea {
+    min-height: 42px;
+    max-height: 84px;
+    padding: 9px 13px;
+    overflow-y: auto;
   }
 
   .mobile-chat-handle {
