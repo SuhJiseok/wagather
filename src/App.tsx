@@ -1788,6 +1788,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const applyingRemoteRef = useRef(false);
   const suppressCommandRef = useRef(false);
   const roomRef = useRef<RoomState | null>(null);
+  const pendingRemoteCommandRef = useRef<RemoteCommand | null>(null);
   const localModeRef = useRef<LocalMode>("synced");
   const countdownActiveRef = useRef(false);
   const countdownIntervalRef = useRef<number | null>(null);
@@ -1959,6 +1960,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   useEffect(() => {
     staticHasShownInitialCountdownRef.current = false;
     initialCountdownRequestedRef.current = false;
+    pendingRemoteCommandRef.current = null;
     lastKnownPlayerTimeRef.current = 0;
     currentVideoIdRef.current = null;
     setInitialPlaybackPending(false);
@@ -1975,6 +1977,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     saveResumePoint(previousVideoId, lastKnownPlayerTimeRef.current);
     setResumePrompt(null);
     clearCountdown();
+    pendingRemoteCommandRef.current = null;
     setLocalMode("synced");
     localModeRef.current = "synced";
     staticHasShownInitialCountdownRef.current = false;
@@ -2204,7 +2207,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     socket.on("remote-command", (command: RemoteCommand) => {
       if (command.sourceId === selfId) return;
       forceSyncedByHostCommand();
-      applyRemoteCommand(command);
+      applyOrQueueRemoteCommand(command);
     });
 
     socket.on("play-countdown", (command: CountdownCommand) => {
@@ -2297,6 +2300,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                 applyingRemoteRef.current = false;
               }, 400);
             }
+            flushPendingRemoteCommand();
           },
           onStateChange: (event: unknown) => {
             const data = (event as { data?: number }).data;
@@ -2318,6 +2322,11 @@ function RoomPage({ roomId }: { roomId: string }) {
       setPlayerReady(false);
     };
   }, [room?.videoId, roomId]);
+
+  useEffect(() => {
+    if (!playerReady) return;
+    flushPendingRemoteCommand();
+  }, [playerReady]);
 
   useEffect(() => {
     if (!joined) return;
@@ -2516,7 +2525,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     setResumePrompt(null);
     clearCountdown();
     const player = playerRef.current;
-    if (!hasPlayerApi(player)) return;
+    if (!hasPlayerApi(player)) return false;
     applyingRemoteRef.current = true;
     const current = player.getCurrentTime();
     if (Math.abs(current - command.playback.time) > 1.2 || command.action === "seek") {
@@ -2527,6 +2536,20 @@ function RoomPage({ roomId }: { roomId: string }) {
     window.setTimeout(() => {
       applyingRemoteRef.current = false;
     }, 400);
+    return true;
+  }
+
+  function applyOrQueueRemoteCommand(command: RemoteCommand) {
+    pendingRemoteCommandRef.current = command;
+    flushPendingRemoteCommand();
+  }
+
+  function flushPendingRemoteCommand() {
+    const command = pendingRemoteCommandRef.current;
+    if (!command) return;
+    if (applyRemoteCommand(command)) {
+      pendingRemoteCommandRef.current = null;
+    }
   }
 
   function clearCountdown() {
