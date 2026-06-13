@@ -417,6 +417,10 @@ function navigate(to: string) {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
+function enterCreatedRoom(inviteUrl: string) {
+  window.location.assign(inviteUrl);
+}
+
 function popularPath(categoryId: string, options: { durationFilter?: DurationFilter } = {}) {
   const params = new URLSearchParams();
   if (categoryId !== "all") params.set("category", categoryId);
@@ -1014,7 +1018,7 @@ function CreateRoomModal({ initialUrl, onClose }: { initialUrl?: string; onClose
     try {
       const inviteUrl = await createRoomRequest(youtubeUrl, trimmedName);
       onClose();
-      navigate(inviteUrl);
+      enterCreatedRoom(inviteUrl);
     } catch (error) {
       const videoId = extractYouTubeId(youtubeUrl);
       if (videoId && trimmedName) {
@@ -1540,7 +1544,7 @@ function HomePage() {
       return;
     }
     try {
-      navigate(await createRoomRequest(youtubeUrl, nickname));
+      enterCreatedRoom(await createRoomRequest(youtubeUrl, nickname));
     } catch {
       setCreateModalUrl(youtubeUrl);
     }
@@ -1681,7 +1685,7 @@ function PopularPage() {
       return;
     }
     try {
-      navigate(await createRoomRequest(youtubeUrl, nickname));
+      enterCreatedRoom(await createRoomRequest(youtubeUrl, nickname));
     } catch {
       setCreateModalUrl(youtubeUrl);
     }
@@ -1778,6 +1782,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [selectedReactionEmoji, setSelectedReactionEmoji] = useState<string | null>(null);
   const [resumePrompt, setResumePrompt] = useState<{ videoId: string; time: number } | null>(null);
   const [emojiBursts, setEmojiBursts] = useState<EmojiBalloon[]>([]);
+  const [playerRetryKey, setPlayerRetryKey] = useState(0);
 
   const socketRef = useRef<Socket | null>(null);
   const playerRef = useRef<YouTubePlayer | null>(null);
@@ -1795,6 +1800,8 @@ function RoomPage({ roomId }: { roomId: string }) {
   const countdownTimeoutRef = useRef<number | null>(null);
   const initialPlayGuardRef = useRef(false);
   const initialPlayGuardTimeoutRef = useRef<number | null>(null);
+  const playerReadyTimeoutRef = useRef<number | null>(null);
+  const playerInitRetryCountRef = useRef(0);
   const staticHasShownInitialCountdownRef = useRef(false);
   const initialCountdownRequestedRef = useRef(false);
   const lastKnownPlayerTimeRef = useRef(0);
@@ -1961,6 +1968,8 @@ function RoomPage({ roomId }: { roomId: string }) {
     staticHasShownInitialCountdownRef.current = false;
     initialCountdownRequestedRef.current = false;
     pendingRemoteCommandRef.current = null;
+    playerInitRetryCountRef.current = 0;
+    clearPlayerReadyWatchdog();
     lastKnownPlayerTimeRef.current = 0;
     currentVideoIdRef.current = null;
     setInitialPlaybackPending(false);
@@ -1978,6 +1987,8 @@ function RoomPage({ roomId }: { roomId: string }) {
     setResumePrompt(null);
     clearCountdown();
     pendingRemoteCommandRef.current = null;
+    playerInitRetryCountRef.current = 0;
+    clearPlayerReadyWatchdog();
     setLocalMode("synced");
     localModeRef.current = "synced";
     staticHasShownInitialCountdownRef.current = false;
@@ -2283,6 +2294,8 @@ function RoomPage({ roomId }: { roomId: string }) {
         },
         events: {
           onReady: () => {
+            if (cancelled) return;
+            clearPlayerReadyWatchdog();
             setPlayerReady(true);
             const playback = roomRef.current?.playback;
             const player = playerRef.current;
@@ -2307,21 +2320,38 @@ function RoomPage({ roomId }: { roomId: string }) {
             handlePlayerStateChange(data);
           },
           onError: () => {
+            clearPlayerReadyWatchdog();
             setPlayerReady(false);
           }
         }
       });
+      setPlayerReady(true);
+      flushPendingRemoteCommand();
+
+      playerReadyTimeoutRef.current = window.setTimeout(() => {
+        if (cancelled) return;
+        if (playerInitRetryCountRef.current >= 1) {
+          clearInitialPlayGuard();
+          setPlayerReady(true);
+          flushPendingRemoteCommand();
+          return;
+        }
+        playerInitRetryCountRef.current += 1;
+        setPlayerReady(false);
+        setPlayerRetryKey((key) => key + 1);
+      }, 5000);
     });
 
     return () => {
       cancelled = true;
+      clearPlayerReadyWatchdog();
       clearInitialPlayGuard();
       if (typeof playerRef.current?.destroy === "function") playerRef.current.destroy();
       playerRef.current = null;
       playerHostRef.current?.replaceChildren();
       setPlayerReady(false);
     };
-  }, [room?.videoId, roomId]);
+  }, [playerRetryKey, room?.videoId, roomId]);
 
   useEffect(() => {
     if (!playerReady) return;
@@ -2361,7 +2391,7 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   function handlePlayerStateChange(data: number | undefined) {
     if (!window.YT || data === undefined) return;
-    if (initialPlayGuardRef.current) {
+    if (initialPlayGuardRef.current && !applyingRemoteRef.current) {
       if (data === window.YT.PlayerState.PLAYING) {
         const player = playerRef.current;
         suppressCommandRef.current = true;
@@ -2524,6 +2554,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   function applyRemoteCommand(command: RemoteCommand) {
     setResumePrompt(null);
     clearCountdown();
+    setInitialPlaybackPending(false);
     const player = playerRef.current;
     if (!hasPlayerApi(player)) return false;
     applyingRemoteRef.current = true;
@@ -2531,12 +2562,25 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (Math.abs(current - command.playback.time) > 1.2 || command.action === "seek") {
       player.seekTo(command.playback.time, true);
     }
-    if (command.playback.state === "playing") player.playVideo();
-    if (command.playback.state === "paused") player.pauseVideo();
+    if (command.playback.state === "playing") {
+      clearInitialPlayGuard();
+      player.playVideo();
+    }
+    if (command.playback.state === "paused") {
+      releaseInitialPlayGuard(300);
+      player.pauseVideo();
+    }
     window.setTimeout(() => {
       applyingRemoteRef.current = false;
     }, 400);
     return true;
+  }
+
+  function clearPlayerReadyWatchdog() {
+    if (playerReadyTimeoutRef.current) {
+      window.clearTimeout(playerReadyTimeoutRef.current);
+      playerReadyTimeoutRef.current = null;
+    }
   }
 
   function applyOrQueueRemoteCommand(command: RemoteCommand) {
