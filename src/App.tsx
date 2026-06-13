@@ -1765,6 +1765,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [localMode, setLocalMode] = useState<LocalMode>("synced");
   const [localTime, setLocalTime] = useState(0);
   const [playerReady, setPlayerReady] = useState(false);
+  const [playerConfirmedReady, setPlayerConfirmedReady] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
   const [chatFocused, setChatFocused] = useState(false);
@@ -1794,6 +1795,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const suppressCommandRef = useRef(false);
   const roomRef = useRef<RoomState | null>(null);
   const pendingRemoteCommandRef = useRef<RemoteCommand | null>(null);
+  const pendingInitialPlaybackTimeRef = useRef<number | null>(null);
   const localModeRef = useRef<LocalMode>("synced");
   const countdownActiveRef = useRef(false);
   const countdownIntervalRef = useRef<number | null>(null);
@@ -1802,6 +1804,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const initialPlayGuardTimeoutRef = useRef<number | null>(null);
   const playerReadyTimeoutRef = useRef<number | null>(null);
   const playerInitRetryCountRef = useRef(0);
+  const playerConfirmedReadyRef = useRef(false);
   const staticHasShownInitialCountdownRef = useRef(false);
   const initialCountdownRequestedRef = useRef(false);
   const lastKnownPlayerTimeRef = useRef(0);
@@ -1846,6 +1849,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   const shouldShowInitialPlayOverlay = Boolean(
     canControl &&
       playerReady &&
+      playerConfirmedReady &&
       countdown === null &&
       !initialPlaybackPending &&
       !resumePrompt &&
@@ -1965,10 +1969,13 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, [room]);
 
   useEffect(() => {
-    staticHasShownInitialCountdownRef.current = false;
-    initialCountdownRequestedRef.current = false;
-    pendingRemoteCommandRef.current = null;
-    playerInitRetryCountRef.current = 0;
+      staticHasShownInitialCountdownRef.current = false;
+      initialCountdownRequestedRef.current = false;
+      pendingRemoteCommandRef.current = null;
+      pendingInitialPlaybackTimeRef.current = null;
+      playerConfirmedReadyRef.current = false;
+      setPlayerConfirmedReady(false);
+      playerInitRetryCountRef.current = 0;
     clearPlayerReadyWatchdog();
     lastKnownPlayerTimeRef.current = 0;
     currentVideoIdRef.current = null;
@@ -1987,6 +1994,9 @@ function RoomPage({ roomId }: { roomId: string }) {
     setResumePrompt(null);
     clearCountdown();
     pendingRemoteCommandRef.current = null;
+    pendingInitialPlaybackTimeRef.current = null;
+    playerConfirmedReadyRef.current = false;
+    setPlayerConfirmedReady(false);
     playerInitRetryCountRef.current = 0;
     clearPlayerReadyWatchdog();
     setLocalMode("synced");
@@ -2002,7 +2012,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   }, [localMode]);
 
   useEffect(() => {
-    if (!playerReady || !canControl || !room?.videoId) return;
+    if (!playerConfirmedReady || !canControl || !room?.videoId) return;
     if (hasInitialCountdownBeenShown()) return;
 
     const playback = roomRef.current?.playback;
@@ -2011,7 +2021,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     const point = getResumePoint(room.videoId);
     if (!point) return;
     setResumePrompt({ videoId: room.videoId, time: point.time });
-  }, [playerReady, canControl, room?.videoId]);
+  }, [playerConfirmedReady, canControl, room?.videoId]);
 
   const joinedVideoId = room?.videoId ?? null;
   useEffect(() => {
@@ -2272,6 +2282,8 @@ function RoomPage({ roomId }: { roomId: string }) {
       if (typeof playerRef.current?.destroy === "function") playerRef.current.destroy();
       playerRef.current = null;
       setPlayerReady(false);
+      playerConfirmedReadyRef.current = false;
+      setPlayerConfirmedReady(false);
 
       // YouTube replaces the target node with an iframe, so recreate a fresh child target on every init.
       host.replaceChildren();
@@ -2297,6 +2309,8 @@ function RoomPage({ roomId }: { roomId: string }) {
             if (cancelled) return;
             clearPlayerReadyWatchdog();
             setPlayerReady(true);
+            playerConfirmedReadyRef.current = true;
+            setPlayerConfirmedReady(true);
             const playback = roomRef.current?.playback;
             const player = playerRef.current;
             if (playback && hasPlayerApi(player)) {
@@ -2313,6 +2327,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                 applyingRemoteRef.current = false;
               }, 400);
             }
+            flushPendingInitialPlaybackCountdown();
             flushPendingRemoteCommand();
           },
           onStateChange: (event: unknown) => {
@@ -2322,6 +2337,8 @@ function RoomPage({ roomId }: { roomId: string }) {
           onError: () => {
             clearPlayerReadyWatchdog();
             setPlayerReady(false);
+            playerConfirmedReadyRef.current = false;
+            setPlayerConfirmedReady(false);
           }
         }
       });
@@ -2350,6 +2367,8 @@ function RoomPage({ roomId }: { roomId: string }) {
       playerRef.current = null;
       playerHostRef.current?.replaceChildren();
       setPlayerReady(false);
+      playerConfirmedReadyRef.current = false;
+      setPlayerConfirmedReady(false);
     };
   }, [playerRetryKey, room?.videoId, roomId]);
 
@@ -2357,6 +2376,11 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (!playerReady) return;
     flushPendingRemoteCommand();
   }, [playerReady]);
+
+  useEffect(() => {
+    playerConfirmedReadyRef.current = playerConfirmedReady;
+    if (playerConfirmedReady) flushPendingInitialPlaybackCountdown();
+  }, [playerConfirmedReady]);
 
   useEffect(() => {
     if (!joined) return;
@@ -2485,9 +2509,24 @@ function RoomPage({ roomId }: { roomId: string }) {
       return;
     }
 
+    if (!playerConfirmedReadyRef.current) {
+      pendingInitialPlaybackTimeRef.current = safeTime;
+      setInitialPlaybackPending(true);
+      return;
+    }
+
+    pendingInitialPlaybackTimeRef.current = null;
     initialCountdownRequestedRef.current = true;
     setInitialPlaybackPending(true);
     socketRef.current?.emit("playback-command", { roomId, participantId: selfId, action: "play", time: safeTime });
+  }
+
+  function flushPendingInitialPlaybackCountdown() {
+    if (!playerConfirmedReadyRef.current) return;
+    const pendingTime = pendingInitialPlaybackTimeRef.current;
+    if (pendingTime === null) return;
+    pendingInitialPlaybackTimeRef.current = null;
+    requestInitialPlaybackCountdown(pendingTime);
   }
 
   function hasInitialCountdownBeenShown() {
