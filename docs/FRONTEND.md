@@ -70,20 +70,23 @@ npm run dev        # node server/index.mjs (개발: Vite 미들웨어 + Socket.I
 ## 7. 유튜브 플레이어 수명주기
 
 - `loadYouTubeApi()` — IFrame API 스크립트를 한 번만 로드(전역 `onYouTubeIframeAPIReady` 사용). 이미 로드돼 있으면 즉시 resolve.
-- **플레이어 초기화 effect** — `room.videoId`가 생기면 실행. 기존 플레이어 destroy → 매번 새 타깃 div(고유 id) 생성(YouTube가 타깃 노드를 iframe으로 치환하기 때문) → `new YT.Player(...)`.
+- **플레이어 생성 effect** — 방(roomId)당 **한 번만** 플레이어를 만듭니다. 의존성이 `videoId`가 아니라 `hasVideoId`(영상 존재 여부, false→true 1회)와 `roomId`/`playerRetryKey`라서, **영상이 바뀌어도 플레이어를 파괴/재생성하지 않습니다.** 생성 시 기존 플레이어 destroy → 새 타깃 div(고유 id) 생성(YouTube가 타깃 노드를 iframe으로 치환하기 때문) → `new YT.Player(...)`. `playerRoomRef`/`loadedVideoIdRef`로 현재 플레이어가 어느 방/영상인지 추적.
+- **영상 변경 = 재생성이 아니라 교체** — videoId가 실제로 바뀌면(`change-video`로 서버가 paused/0 리셋) 같은 플레이어에서 `swapVideo()`가 `cueVideoById(videoId, 0)`로 **영상만 교체**합니다. 준비 전이거나 플레이어가 없으면 생성 effect/`onReady`가 최신 영상으로 맞춥니다. (과거에는 videoId마다 destroy→재생성해서, 준비 전 플레이어를 파괴하고 즉시 재생성하면 유튜브 API가 멈춰 "준비중"에 갇히던 문제가 있었음 → 이 구조로 근본 차단)
 - **`playerVars`(중요, coarsePointer 분기)**:
   - `autoplay:0`, `enablejsapi:1`, `origin`, `playsinline:1`, `rel:0`, `modestbranding:1`
   - `controls`: 터치 기기는 `1`(네이티브), PC는 `0`(커스텀 컨트롤 사용)
   - `disablekb`: PC는 `1`, 터치는 `0`
   - `fs`: 터치는 `1`(네이티브 전체화면), PC는 `0`(커스텀 전체화면 버튼)
-- **콜백**: `onReady`(아래), `onStateChange`→`handlePlayerStateChange`, `onError`(준비 상태 해제).
-- **2단계 준비 상태**: `playerReady`(UI용, 생성 직후 즉시 true) vs `playerConfirmedReady`(onReady 시 true). 명령 실행은 `playerConfirmedReadyRef`를 확인하고, 준비 전 도착한 명령은 큐잉 후 flush.
-- **5초 워치독**: `onReady`가 5초 안에 안 오면 `playerRetryKey`를 올려 한 번 재시도, 두 번째 실패 시 포기하고 `playerReady`만 true 처리.
+- **콜백**: `onReady`(아래), `onStateChange`→`handlePlayerStateChange`, `onError`.
+- **`onError` 복구** — 오류 시 `playerReady=false`로 두되 **제한적으로(최대 2회) `playerRetryKey`를 올려 재생성 재시도**하고, 한계 도달 시 최소한 로딩 오버레이는 걷습니다(`setPlayerReady(true)`). "영상을 준비중"에 영원히 갇히지 않게 함.
+- **2단계 준비 상태**: `playerReady`(UI용, 생성 직후 즉시 true) vs `playerConfirmedReady`(onReady 시 true). 명령 실행은 `playerConfirmedReadyRef`를 확인하고, 준비 전 도착한 명령은 큐잉 후 flush. 영상 교체(swap)는 플레이어가 유지되므로 `playerConfirmedReady`를 리셋하지 않습니다.
+- **5초 워치독**: `onReady`가 5초 안에 안 오면 `playerRetryKey`를 올려 한 번 재시도, 두 번째 실패 시 포기하고 `playerReady`만 true 처리. `onReady` 성공 시 재시도 카운트를 0으로 리셋.
 - **initialPlayGuard**: 로드 직후 YouTube가 임의로 PLAYING이 되는 것을 막는 가드. 가드 중 PLAYING이 뜨면 즉시 pause시키고 일정 시간 뒤 해제.
 
 ### onReady의 위치 복원(중요)
 `onReady`는 방의 현재 재생 지점으로 플레이어를 맞추되 **자동으로 재생하지 않습니다**.
 - 방이 **일시정지**거나 `time>0.3`이면 `cueVideoById(videoId, time)`로 해당 위치에 **cued(포스터)** 상태로 둠 → 검은 버퍼링 프레임 대신 썸네일이 보이고 `getCurrentTime()`도 유지됨.
+- **초기화 중 영상이 바뀐 경우**(생성 시 videoId ≠ 현재 방 videoId)에는 최신 영상으로 cue.
 - 방이 **재생 중**이면 `needsResume=true`로 두어 "이어보기" 오버레이를 띄움(아래 9절).
 
 ## 8. 재생 동기화

@@ -1825,6 +1825,9 @@ function RoomPage({ roomId }: { roomId: string }) {
   const playerConfirmedReadyRef = useRef(false);
   // 제스처 밖에서 음소거로 자동재생을 시작했을 때, 실제 PLAYING이 되면 음소거를 해제하기 위한 플래그
   const autoUnmuteRef = useRef(false);
+  // 현재 플레이어가 어느 방/영상으로 만들어졌는지 추적. 영상 변경 시 파괴/재생성 대신 영상만 교체하기 위함.
+  const playerRoomRef = useRef<string | null>(null);
+  const loadedVideoIdRef = useRef<string | null>(null);
   const staticHasShownInitialCountdownRef = useRef(false);
   const initialCountdownRequestedRef = useRef(false);
   const lastKnownPlayerTimeRef = useRef(0);
@@ -2018,16 +2021,19 @@ function RoomPage({ roomId }: { roomId: string }) {
     clearCountdown();
     pendingRemoteCommandRef.current = null;
     pendingInitialPlaybackTimeRef.current = null;
-    playerConfirmedReadyRef.current = false;
-    setPlayerConfirmedReady(false);
-    playerInitRetryCountRef.current = 0;
-    clearPlayerReadyWatchdog();
     setLocalMode("synced");
     localModeRef.current = "synced";
     staticHasShownInitialCountdownRef.current = false;
     initialCountdownRequestedRef.current = Boolean(room.hasShownInitialCountdown);
     lastKnownPlayerTimeRef.current = 0;
     setInitialPlaybackPending(false);
+    setNeedsResume(false);
+    setNeedsUnmute(false);
+    // 영상이 실제로 바뀐 경우: 준비된 플레이어가 있으면 파괴/재생성 없이 영상만 교체한다.
+    // 플레이어가 아직 없거나 준비 전이면 생성 effect / onReady가 최신 영상으로 맞춘다.
+    if (playerRef.current && playerRoomRef.current === roomId && playerConfirmedReadyRef.current) {
+      swapVideo(room.videoId);
+    }
   }, [room?.hasShownInitialCountdown, room?.videoId]);
 
   useEffect(() => {
@@ -2299,14 +2305,19 @@ function RoomPage({ roomId }: { roomId: string }) {
     };
   }, [isStaticPreview, joined, nickname, roomId, selfId, staticVideoId]);
 
+  // 플레이어는 방(roomId)당 한 번만 생성한다. 영상 변경 시에는 재생성하지 않고 swapVideo로 영상만 교체한다.
+  // 따라서 의존성은 videoId가 아니라 hasVideoId(영상 존재 여부, false→true 1회)로 둔다.
+  const hasVideoId = Boolean(room?.videoId);
   useEffect(() => {
-    if (!room?.videoId) return;
+    if (!hasVideoId) return;
     let cancelled = false;
 
     loadYouTubeApi().then(() => {
       if (cancelled || !window.YT?.Player) return;
       const host = playerHostRef.current;
       if (!host) return;
+      const videoId = roomRef.current?.videoId;
+      if (!videoId) return;
 
       if (typeof playerRef.current?.destroy === "function") playerRef.current.destroy();
       playerRef.current = null;
@@ -2317,14 +2328,16 @@ function RoomPage({ roomId }: { roomId: string }) {
       // YouTube replaces the target node with an iframe, so recreate a fresh child target on every init.
       host.replaceChildren();
       const playerTarget = document.createElement("div");
-      playerTarget.id = `youtube-player-${roomId}-${room.videoId}-${Date.now()}`;
+      playerTarget.id = `youtube-player-${roomId}-${Date.now()}`;
       playerTarget.style.width = "100%";
       playerTarget.style.height = "100%";
       host.appendChild(playerTarget);
 
+      playerRoomRef.current = roomId;
+      loadedVideoIdRef.current = videoId;
       initialPlayGuardRef.current = true;
       playerRef.current = new window.YT.Player(playerTarget.id, {
-        videoId: room.videoId,
+        videoId,
         playerVars: {
           autoplay: 0,
           // 터치 기기는 유튜브 네이티브 컨트롤 유지, PC는 커스텀 컨트롤 사용을 위해 숨김
@@ -2341,25 +2354,33 @@ function RoomPage({ roomId }: { roomId: string }) {
           onReady: () => {
             if (cancelled) return;
             clearPlayerReadyWatchdog();
+            playerInitRetryCountRef.current = 0;
             setPlayerReady(true);
             playerConfirmedReadyRef.current = true;
             setPlayerConfirmedReady(true);
-            const playback = roomRef.current?.playback;
             const player = playerRef.current;
-            if (playback && hasPlayerApi(player)) {
+            const playback = roomRef.current?.playback;
+            const latestVideoId = roomRef.current?.videoId || loadedVideoIdRef.current;
+            if (player && hasPlayerApi(player)) {
               applyingRemoteRef.current = true;
               initialPlayGuardRef.current = false;
               // 새로고침/입장 시에는 자동으로 재생하지 않고 해당 위치에 포스터(cued) 상태로 둔다.
               // 브라우저 정책상 제스처 없이 소리 있는 재생은 불가하고(차단 시 검정화면), 음소거 자동재생은
               // 사용자에게 음소거로 보이기 때문이다. cueVideoById는 검은 버퍼링 프레임 대신 포스터를
-              // 보여주고 getCurrentTime()도 그 위치로 유지한다. 방이 재생 중이면 "이어보기" 오버레이를
-              // 띄워, 탭(제스처) 한 번으로 소리까지 바로 이어서 재생하게 한다.
-              if (playback.time > 0.3 && typeof player.cueVideoById === "function") {
-                player.cueVideoById(room.videoId, playback.time);
+              // 보여주고 getCurrentTime()도 그 위치로 유지한다. 초기화 중 영상이 바뀌었으면 최신 영상으로 맞춘다.
+              const startAt = playback && playback.time > 0.3 ? playback.time : 0;
+              if (
+                latestVideoId &&
+                typeof player.cueVideoById === "function" &&
+                (latestVideoId !== loadedVideoIdRef.current || startAt > 0)
+              ) {
+                player.cueVideoById(latestVideoId, startAt);
+                loadedVideoIdRef.current = latestVideoId;
               } else {
                 player.pauseVideo();
               }
-              setNeedsResume(playback.state === "playing");
+              // 방이 재생 중이면 "이어보기" 오버레이로 탭 한 번에 소리까지 이어 재생.
+              setNeedsResume(playback?.state === "playing");
               window.setTimeout(() => {
                 applyingRemoteRef.current = false;
               }, 400);
@@ -2372,10 +2393,18 @@ function RoomPage({ roomId }: { roomId: string }) {
             handlePlayerStateChange(data);
           },
           onError: () => {
+            if (cancelled) return;
             clearPlayerReadyWatchdog();
-            setPlayerReady(false);
             playerConfirmedReadyRef.current = false;
             setPlayerConfirmedReady(false);
+            // 오류 시 "준비중"에 영원히 갇히지 않도록 제한적으로 재생성 재시도, 한계 도달 시 오버레이만 해제.
+            if (playerInitRetryCountRef.current < 2) {
+              playerInitRetryCountRef.current += 1;
+              setPlayerReady(false);
+              setPlayerRetryKey((key) => key + 1);
+            } else {
+              setPlayerReady(true);
+            }
           }
         }
       });
@@ -2402,12 +2431,14 @@ function RoomPage({ roomId }: { roomId: string }) {
       clearInitialPlayGuard();
       if (typeof playerRef.current?.destroy === "function") playerRef.current.destroy();
       playerRef.current = null;
+      playerRoomRef.current = null;
+      loadedVideoIdRef.current = null;
       playerHostRef.current?.replaceChildren();
       setPlayerReady(false);
       playerConfirmedReadyRef.current = false;
       setPlayerConfirmedReady(false);
     };
-  }, [playerRetryKey, room?.videoId, roomId]);
+  }, [playerRetryKey, roomId, hasVideoId]);
 
   useEffect(() => {
     if (!playerReady) return;
@@ -2693,6 +2724,26 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (player && typeof player.unMute === "function") player.unMute();
     autoUnmuteRef.current = false;
     setNeedsUnmute(false);
+  }
+
+  // 영상 변경 시 플레이어를 파괴/재생성하지 않고 같은 플레이어에서 영상만 교체한다.
+  // (준비 전 플레이어를 destroy → 즉시 재생성하면 유튜브 IFrame API가 멈춰 "준비중"에 갇히는 문제를 근본 차단)
+  // 영상 변경 시 서버가 항상 paused/0으로 리셋하므로 cueVideoById로 포스터(cued) 상태로 둔다.
+  function swapVideo(videoId: string) {
+    const player = playerRef.current;
+    if (!hasPlayerApi(player) || typeof player.cueVideoById !== "function") return false;
+    applyingRemoteRef.current = true;
+    initialPlayGuardRef.current = true;
+    autoUnmuteRef.current = false;
+    player.cueVideoById(videoId, 0);
+    loadedVideoIdRef.current = videoId;
+    setNeedsResume(false);
+    setNeedsUnmute(false);
+    window.setTimeout(() => {
+      applyingRemoteRef.current = false;
+    }, 600);
+    releaseInitialPlayGuard(900);
+    return true;
   }
 
   // "이어보기" 오버레이 클릭(제스처) 안에서 호출. 새로고침 후 방의 현재 위치로 맞춰 소리 있는
