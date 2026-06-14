@@ -769,8 +769,11 @@ io.on("connection", (socket) => {
       if (room.hasShownInitialCountdown) {
         room.playback = { state: "playing", time: nextTime, updatedAt: now };
         room.lastActivity = now;
+        // 재생 재개: 요청자(보통 방장)는 이미 로컬에서 재생했으므로 자기 명령을 다시 적용하지
+        // 않도록 participant.id로 보낸다. ("system"으로 보내면 요청자가 자기 명령을 재적용하면서
+        // safePlay()가 음소거를 다시 걸어버린다.) pause/seek 경로와 동일한 방식.
         io.to(roomId).emit("remote-command", {
-          sourceId: "system",
+          sourceId: participant.id,
           action: "play",
           playback: normalizedPlayback(room)
         });

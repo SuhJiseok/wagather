@@ -1787,6 +1787,8 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [playerRetryKey, setPlayerRetryKey] = useState(0);
   // 새로고침 등 사용자 제스처 없이 음소거로 재생을 시작한 경우, 직접 소리를 켜도록 안내하는 상태
   const [needsUnmute, setNeedsUnmute] = useState(false);
+  // 새로고침/입장 시 방이 재생 중이면, 탭 한 번으로 소리까지 이어 재생하도록 띄우는 오버레이 상태
+  const [needsResume, setNeedsResume] = useState(false);
 
   const socketRef = useRef<Socket | null>(null);
   const playerRef = useRef<YouTubePlayer | null>(null);
@@ -2320,22 +2322,18 @@ function RoomPage({ roomId }: { roomId: string }) {
             const player = playerRef.current;
             if (playback && hasPlayerApi(player)) {
               applyingRemoteRef.current = true;
-              if (playback.state === "playing") {
-                if (playback.time > 0.3) player.seekTo(playback.time, true);
-                initialPlayGuardRef.current = false;
-                safePlay(player);
+              initialPlayGuardRef.current = false;
+              // 새로고침/입장 시에는 자동으로 재생하지 않고 해당 위치에 포스터(cued) 상태로 둔다.
+              // 브라우저 정책상 제스처 없이 소리 있는 재생은 불가하고(차단 시 검정화면), 음소거 자동재생은
+              // 사용자에게 음소거로 보이기 때문이다. cueVideoById는 검은 버퍼링 프레임 대신 포스터를
+              // 보여주고 getCurrentTime()도 그 위치로 유지한다. 방이 재생 중이면 "이어보기" 오버레이를
+              // 띄워, 탭(제스처) 한 번으로 소리까지 바로 이어서 재생하게 한다.
+              if (playback.time > 0.3 && typeof player.cueVideoById === "function") {
+                player.cueVideoById(room.videoId, playback.time);
               } else {
-                // 일시정지 상태로 새로고침한 경우: 아직 시작 안 된(cued) 플레이어에 seekTo를 하면
-                // 포스터가 검은 버퍼링 프레임으로 바뀌고, 그 상태로 pauseVideo하면 검정화면이 된다.
-                // cueVideoById로 해당 위치에 '대기(cued)' 상태로 두면 포스터가 보이고
-                // getCurrentTime()도 그 위치로 유지되어, 이후 재생 시 정확한 지점에서 이어진다.
-                if (playback.time > 0.3 && typeof player.cueVideoById === "function") {
-                  player.cueVideoById(room.videoId, playback.time);
-                } else {
-                  player.pauseVideo();
-                }
-                releaseInitialPlayGuard(1200);
+                player.pauseVideo();
               }
+              setNeedsResume(playback.state === "playing");
               window.setTimeout(() => {
                 applyingRemoteRef.current = false;
               }, 400);
@@ -2638,10 +2636,29 @@ function RoomPage({ roomId }: { roomId: string }) {
     setNeedsUnmute(false);
   }
 
+  // "이어보기" 오버레이 클릭(제스처) 안에서 호출. 새로고침 후 방의 현재 위치로 맞춰 소리 있는
+  // 상태로 이어서 재생한다. iframe의 allow=autoplay 위임 덕분에 이 탭 제스처로 소리 재생이 허용된다.
+  function resumeAfterRefresh() {
+    setNeedsResume(false);
+    const player = playerRef.current;
+    if (!hasPlayerApi(player)) return;
+    applyingRemoteRef.current = true;
+    autoUnmuteRef.current = false;
+    if (typeof player.unMute === "function") player.unMute();
+    const target = roomRef.current?.playback;
+    if (target && target.time > 0.3) player.seekTo(target.time, true);
+    player.playVideo();
+    window.setTimeout(() => {
+      applyingRemoteRef.current = false;
+    }, 600);
+    updateLocalMode("synced");
+  }
+
   function applyRemoteCommand(command: RemoteCommand) {
     setResumePrompt(null);
     clearCountdown();
     setInitialPlaybackPending(false);
+    setNeedsResume(false);
     const player = playerRef.current;
     if (!hasPlayerApi(player)) return false;
     applyingRemoteRef.current = true;
@@ -3390,6 +3407,15 @@ function RoomPage({ roomId }: { roomId: string }) {
                 <span>
                   <Play size={22} />
                   같이 재생 시작
+                </span>
+              </button>
+            )}
+
+            {needsResume && (
+              <button className="initial-play-overlay" type="button" onClick={resumeAfterRefresh}>
+                <span>
+                  <Play size={22} />
+                  이어보기
                 </span>
               </button>
             )}
