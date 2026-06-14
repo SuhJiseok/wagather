@@ -33,5 +33,7 @@ interface YouTubePlayer {
   mute: () => void;
   unMute: () => void;
   isMuted: () => boolean;
+  setVolume: (volume: number) => void;
+  getVolume: () => number;
   destroy: () => void;
 }

@@ -10,9 +10,12 @@ import {
   Home,
   Link as LinkIcon,
   LogIn,
+  Maximize,
   Menu,
   MessageCircle,
   MessagesSquare,
+  Minimize,
+  Pause,
   Play,
   Plus,
   Pointer,
@@ -22,6 +25,7 @@ import {
   UserRound,
   UsersRound,
   Volume2,
+  VolumeX,
   X
 } from "lucide-react";
 
@@ -1789,6 +1793,15 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [needsUnmute, setNeedsUnmute] = useState(false);
   // 새로고침/입장 시 방이 재생 중이면, 탭 한 번으로 소리까지 이어 재생하도록 띄우는 오버레이 상태
   const [needsResume, setNeedsResume] = useState(false);
+  // 커스텀 플레이어 컨트롤(네이티브 컨트롤 대신) 상태
+  const [playerUi, setPlayerUi] = useState({ playing: false, current: 0, duration: 0, muted: false, volume: 100 });
+  const [controlsActive, setControlsActive] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [scrubTime, setScrubTime] = useState<number | null>(null);
+  // 터치 기기는 네이티브 컨트롤을 유지하고, PC(정밀 포인터)에서만 추적 레이어+커스텀 컨트롤을 쓴다.
+  const [coarsePointer] = useState(
+    () => typeof window !== "undefined" && Boolean(window.matchMedia?.("(pointer: coarse)").matches)
+  );
 
   const socketRef = useRef<Socket | null>(null);
   const playerRef = useRef<YouTubePlayer | null>(null);
@@ -1836,6 +1849,9 @@ function RoomPage({ roomId }: { roomId: string }) {
   const cursorChatRef = useRef<{ x: number; y: number; text: string } | null>(null);
   const cursorEmitAtRef = useRef(0);
   const cursorIdleTimeoutRef = useRef<number | null>(null);
+  // 영상 위 커서 위치(비율). 추적 레이어가 갱신하며, "/" 말풍선 초기 위치에 사용한다.
+  const playerPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const controlsHideTimeoutRef = useRef<number | null>(null);
 
   const selfId = participantIdRef.current;
   const self = room?.participants.find((participant) => participant.id === selfId) || null;
@@ -2067,11 +2083,17 @@ function RoomPage({ roomId }: { roomId: string }) {
       if (!frame) return;
       event.preventDefault();
 
-      const rect = frame.getBoundingClientRect();
-      const mouse = lastMouseRef.current;
+      // 추적 레이어가 갱신한 커서 비율을 우선 사용한다(영상 위 위치를 정확히 반영).
+      // 없으면 마지막 마우스 좌표로 계산, 그것도 없으면 기본 중앙.
       let x = 0.5;
       let y = 0.4;
-      if (mouse && rect.width > 0 && rect.height > 0) {
+      const pointer = playerPointerRef.current;
+      const mouse = lastMouseRef.current;
+      const rect = frame.getBoundingClientRect();
+      if (pointer) {
+        x = pointer.x;
+        y = pointer.y;
+      } else if (mouse && rect.width > 0 && rect.height > 0) {
         x = clampRatio((mouse.x - rect.left) / rect.width, 0.02, 0.98);
         y = clampRatio((mouse.y - rect.top) / rect.height, 0.05, 0.9);
       }
@@ -2305,8 +2327,12 @@ function RoomPage({ roomId }: { roomId: string }) {
         videoId: room.videoId,
         playerVars: {
           autoplay: 0,
-          controls: 1,
+          // 터치 기기는 유튜브 네이티브 컨트롤 유지, PC는 커스텀 컨트롤 사용을 위해 숨김
+          controls: coarsePointer ? 1 : 0,
+          disablekb: coarsePointer ? 0 : 1,
           enablejsapi: 1,
+          fs: coarsePointer ? 1 : 0,
+          modestbranding: 1,
           origin: window.location.origin,
           playsinline: 1,
           rel: 0
@@ -2414,6 +2440,39 @@ function RoomPage({ roomId }: { roomId: string }) {
 
     return () => window.clearInterval(interval);
   }, [joined, localTime, roomId, selfId]);
+
+  // 커스텀 컨트롤 표시용 플레이어 상태 폴링 (재생 여부/시간/길이/음소거/음량)
+  useEffect(() => {
+    if (!joined) return;
+    const id = window.setInterval(() => {
+      const player = playerRef.current;
+      if (!hasPlayerApi(player) || !window.YT) return;
+      const state = player.getPlayerState();
+      const next = {
+        playing: state === window.YT.PlayerState.PLAYING,
+        current: player.getCurrentTime() || 0,
+        duration: player.getDuration() || 0,
+        muted: typeof player.isMuted === "function" ? player.isMuted() : false,
+        volume: typeof player.getVolume === "function" ? Math.round(player.getVolume()) : 100
+      };
+      setPlayerUi((prev) =>
+        prev.playing === next.playing &&
+        Math.abs(prev.current - next.current) < 0.25 &&
+        prev.duration === next.duration &&
+        prev.muted === next.muted &&
+        prev.volume === next.volume
+          ? prev
+          : next
+      );
+    }, 300);
+    return () => window.clearInterval(id);
+  }, [joined, playerReady]);
+
+  useEffect(() => {
+    const onFs = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
 
   function handleJoin(event: React.FormEvent) {
     event.preventDefault();
@@ -2652,6 +2711,114 @@ function RoomPage({ roomId }: { roomId: string }) {
       applyingRemoteRef.current = false;
     }, 600);
     updateLocalMode("synced");
+  }
+
+  // ===== 커스텀 플레이어 컨트롤 (네이티브 컨트롤 대체) =====
+  //
+  // [도입 이유]
+  // 영상 위에서 "/"를 누르면 "마우스 커서 위치"에 말풍선(커서챗)이 떠야 하는데,
+  // 유튜브 플레이어가 교차 출처(cross-origin) iframe이라 마우스가 그 위에 있을 때
+  // mousemove 이벤트가 iframe에 가로채여 부모 페이지로 오지 않는다.
+  // → 부모는 영상 위 커서 위치를 알 수 없어, 말풍선이 처음엔 엉뚱한(기본 중앙) 위치에 떴다.
+  //
+  // 이를 해결하려면 영상 위에 "투명 추적 레이어(.player-surface)"를 깔아 부모가 커서를
+  // 항상 추적해야 하는데, 그 레이어가 유튜브 네이티브 컨트롤(재생/탐색/음량/전체화면) 클릭을
+  // 막는다. 그래서 네이티브 컨트롤(controls:0)을 끄고 아래의 커스텀 컨트롤로 대체했다.
+  //
+  // (모바일/터치는 "/" 기능이 없으므로 추적 레이어를 쓰지 않고 네이티브 컨트롤을 유지한다.
+  //  playerVars의 controls 분기 + coarsePointer 게이팅 참고)
+  function revealControls() {
+    setControlsActive(true);
+    if (controlsHideTimeoutRef.current) window.clearTimeout(controlsHideTimeoutRef.current);
+    controlsHideTimeoutRef.current = window.setTimeout(() => setControlsActive(false), 2600);
+  }
+
+  function handlePlayerSurfaceMove(event: React.PointerEvent<HTMLDivElement>) {
+    const frame = playerWrapRef.current;
+    if (frame) {
+      const rect = frame.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        playerPointerRef.current = {
+          x: clampRatio((event.clientX - rect.left) / rect.width, 0.02, 0.98),
+          y: clampRatio((event.clientY - rect.top) / rect.height, 0.05, 0.9)
+        };
+      }
+    }
+    revealControls();
+  }
+
+  function togglePlayPause() {
+    if (needsResume) {
+      resumeAfterRefresh();
+      return;
+    }
+    const player = playerRef.current;
+    if (!hasPlayerApi(player) || !window.YT) return;
+    const state = player.getPlayerState();
+    const isPlaying = state === window.YT.PlayerState.PLAYING || state === window.YT.PlayerState.BUFFERING;
+    if (isPlaying) {
+      player.pauseVideo();
+    } else if (canControl && !hasInitialCountdownBeenShown()) {
+      startInitialPlaybackFromOverlay();
+    } else {
+      player.playVideo();
+    }
+    revealControls();
+  }
+
+  function commitSeek(time: number) {
+    const player = playerRef.current;
+    if (!hasPlayerApi(player)) return;
+    const safe = Math.max(0, time);
+    suppressCommandRef.current = true;
+    player.seekTo(safe, true);
+    window.setTimeout(() => {
+      suppressCommandRef.current = false;
+    }, 350);
+    if (isStaticPreview) {
+      setScrubTime(null);
+      return;
+    }
+    if (canControl) {
+      socketRef.current?.emit("playback-command", { roomId, participantId: selfId, action: "seek", time: safe });
+    } else {
+      updateLocalMode("freeplay");
+    }
+    setScrubTime(null);
+  }
+
+  function toggleMute() {
+    const player = playerRef.current;
+    if (!hasPlayerApi(player) || typeof player.isMuted !== "function") return;
+    const willMute = !player.isMuted();
+    if (willMute) player.mute();
+    else player.unMute();
+    autoUnmuteRef.current = false;
+    setNeedsUnmute(false);
+    setPlayerUi((prev) => ({ ...prev, muted: willMute }));
+    revealControls();
+  }
+
+  function changeVolume(volume: number) {
+    const player = playerRef.current;
+    if (!hasPlayerApi(player) || typeof player.setVolume !== "function") return;
+    const safe = Math.round(clampRatio(volume, 0, 100));
+    player.setVolume(safe);
+    if (safe > 0 && typeof player.unMute === "function" && player.isMuted?.()) player.unMute();
+    if (safe === 0 && typeof player.mute === "function") player.mute();
+    autoUnmuteRef.current = false;
+    setNeedsUnmute(false);
+    setPlayerUi((prev) => ({ ...prev, volume: safe, muted: safe === 0 }));
+  }
+
+  function toggleFullscreen() {
+    const el = playerWrapRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+    } else {
+      el.requestFullscreen?.();
+    }
   }
 
   function applyRemoteCommand(command: RemoteCommand) {
@@ -3386,8 +3553,13 @@ function RoomPage({ roomId }: { roomId: string }) {
       <section className="watch-layout">
         <div className="watch-main">
           <div
-            className={`player-frame ${selectedReactionEmoji ? "reaction-targeting" : ""}`}
+            className={`player-frame ${selectedReactionEmoji ? "reaction-targeting" : ""} ${controlsActive ? "controls-active" : ""}`}
             ref={playerWrapRef}
+            onPointerMove={handlePlayerSurfaceMove}
+            onPointerLeave={() => {
+              if (controlsHideTimeoutRef.current) window.clearTimeout(controlsHideTimeoutRef.current);
+              controlsHideTimeoutRef.current = window.setTimeout(() => setControlsActive(false), 500);
+            }}
             onPointerDownCapture={(event) => {
               if (!selectedReactionEmoji) return;
               event.preventDefault();
@@ -3396,6 +3568,13 @@ function RoomPage({ roomId }: { roomId: string }) {
             }}
           >
             <div className="youtube-player" ref={playerHostRef} />
+            {playerReady && !coarsePointer && (
+              <div
+                className="player-surface"
+                onClick={togglePlayPause}
+                aria-hidden="true"
+              />
+            )}
             {!playerReady && (
               <div className="player-loading">
                 <Clapperboard size={28} />
@@ -3426,6 +3605,70 @@ function RoomPage({ roomId }: { roomId: string }) {
                 소리 켜기
               </button>
             )}
+
+            {playerReady &&
+              !coarsePointer &&
+              !shouldShowInitialPlayOverlay &&
+              !needsResume &&
+              !resumePrompt &&
+              !cursorChat &&
+              !selectedReactionEmoji && (
+                <div
+                  className={`player-controls ${controlsActive ? "is-visible" : ""}`}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="pc-btn"
+                    aria-label={playerUi.playing ? "일시정지" : "재생"}
+                    onClick={togglePlayPause}
+                  >
+                    {playerUi.playing ? <Pause size={18} /> : <Play size={18} />}
+                  </button>
+                  <span className="pc-time">{formatTime(scrubTime ?? playerUi.current)}</span>
+                  <input
+                    className="pc-seek"
+                    type="range"
+                    min={0}
+                    max={Math.max(playerUi.duration, 0.1)}
+                    step="any"
+                    value={scrubTime ?? Math.min(playerUi.current, playerUi.duration || 0)}
+                    onChange={(event) => setScrubTime(Number(event.target.value))}
+                    onPointerUp={(event) => commitSeek(Number((event.target as HTMLInputElement).value))}
+                    onKeyUp={() => {
+                      if (scrubTime !== null) commitSeek(scrubTime);
+                    }}
+                    aria-label="재생 위치"
+                  />
+                  <span className="pc-time">{formatTime(playerUi.duration)}</span>
+                  <button
+                    type="button"
+                    className="pc-btn"
+                    aria-label={playerUi.muted ? "음소거 해제" : "음소거"}
+                    onClick={toggleMute}
+                  >
+                    {playerUi.muted || playerUi.volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
+                  </button>
+                  <input
+                    className="pc-volume"
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={playerUi.muted ? 0 : playerUi.volume}
+                    onChange={(event) => changeVolume(Number(event.target.value))}
+                    aria-label="음량"
+                  />
+                  <button
+                    type="button"
+                    className="pc-btn"
+                    aria-label={isFullscreen ? "전체화면 종료" : "전체화면"}
+                    onClick={toggleFullscreen}
+                  >
+                    {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
+                  </button>
+                </div>
+              )}
 
             {resumePrompt && (
               <div className="resume-overlay" role="dialog" aria-label="이어보기 안내">

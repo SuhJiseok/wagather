@@ -1950,6 +1950,110 @@ input::placeholder {
   pointer-events: none;
 }
 
+/* 영상 위 투명 추적/클릭 레이어 (네이티브 컨트롤 대체) */
+.player-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: transparent;
+}
+
+.player-frame.reaction-targeting .player-surface {
+  pointer-events: none;
+}
+
+/* 커스텀 플레이어 컨트롤 바 */
+.player-controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 22px 14px 12px;
+  background: linear-gradient(to top, rgba(3, 4, 3, 0.78), rgba(3, 4, 3, 0));
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+  pointer-events: none;
+}
+
+.player-controls.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.pc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.pc-btn:hover {
+  background: rgba(244, 240, 232, 0.14);
+}
+
+.pc-time {
+  flex: 0 0 auto;
+  min-width: 38px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.pc-seek {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pc-volume {
+  flex: 0 0 72px;
+  width: 72px;
+}
+
+.player-controls input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(244, 240, 232, 0.28);
+  cursor: pointer;
+}
+
+.player-controls input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.player-controls input[type="range"]::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 .player-loading {
   position: absolute;
   inset: 0;
