@@ -25,9 +25,13 @@ interface Window {
 interface YouTubePlayer {
   playVideo: () => void;
   pauseVideo: () => void;
+  cueVideoById: (videoId: string, startSeconds?: number) => void;
   seekTo: (seconds: number, allowSeekAhead: boolean) => void;
   getCurrentTime: () => number;
   getPlayerState: () => number;
   getDuration: () => number;
+  mute: () => void;
+  unMute: () => void;
+  isMuted: () => boolean;
   destroy: () => void;
 }

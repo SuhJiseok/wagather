@@ -21,6 +21,7 @@ import {
   Smile,
   UserRound,
   UsersRound,
+  Volume2,
   X
 } from "lucide-react";
 
@@ -1784,6 +1785,8 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [resumePrompt, setResumePrompt] = useState<{ videoId: string; time: number } | null>(null);
   const [emojiBursts, setEmojiBursts] = useState<EmojiBalloon[]>([]);
   const [playerRetryKey, setPlayerRetryKey] = useState(0);
+  // 새로고침 등 사용자 제스처 없이 음소거로 재생을 시작한 경우, 직접 소리를 켜도록 안내하는 상태
+  const [needsUnmute, setNeedsUnmute] = useState(false);
 
   const socketRef = useRef<Socket | null>(null);
   const playerRef = useRef<YouTubePlayer | null>(null);
@@ -1805,6 +1808,8 @@ function RoomPage({ roomId }: { roomId: string }) {
   const playerReadyTimeoutRef = useRef<number | null>(null);
   const playerInitRetryCountRef = useRef(0);
   const playerConfirmedReadyRef = useRef(false);
+  // 제스처 밖에서 음소거로 자동재생을 시작했을 때, 실제 PLAYING이 되면 음소거를 해제하기 위한 플래그
+  const autoUnmuteRef = useRef(false);
   const staticHasShownInitialCountdownRef = useRef(false);
   const initialCountdownRequestedRef = useRef(false);
   const lastKnownPlayerTimeRef = useRef(0);
@@ -2315,12 +2320,20 @@ function RoomPage({ roomId }: { roomId: string }) {
             const player = playerRef.current;
             if (playback && hasPlayerApi(player)) {
               applyingRemoteRef.current = true;
-              if (playback.time > 0.3) player.seekTo(playback.time, true);
               if (playback.state === "playing") {
+                if (playback.time > 0.3) player.seekTo(playback.time, true);
                 initialPlayGuardRef.current = false;
-                player.playVideo();
+                safePlay(player);
               } else {
-                player.pauseVideo();
+                // 일시정지 상태로 새로고침한 경우: 아직 시작 안 된(cued) 플레이어에 seekTo를 하면
+                // 포스터가 검은 버퍼링 프레임으로 바뀌고, 그 상태로 pauseVideo하면 검정화면이 된다.
+                // cueVideoById로 해당 위치에 '대기(cued)' 상태로 두면 포스터가 보이고
+                // getCurrentTime()도 그 위치로 유지되어, 이후 재생 시 정확한 지점에서 이어진다.
+                if (playback.time > 0.3 && typeof player.cueVideoById === "function") {
+                  player.cueVideoById(room.videoId, playback.time);
+                } else {
+                  player.pauseVideo();
+                }
                 releaseInitialPlayGuard(1200);
               }
               window.setTimeout(() => {
@@ -2415,6 +2428,21 @@ function RoomPage({ roomId }: { roomId: string }) {
 
   function handlePlayerStateChange(data: number | undefined) {
     if (!window.YT || data === undefined) return;
+    // 음소거 자동재생으로 시작한 경우의 처리. (아래 guard들의 early-return보다 먼저 실행되어야 한다)
+    // 주의: 브라우저는 "음소거라서 재생 중인" 영상을 사용자 제스처 없이 unMute()하면 다시 정지시킨다.
+    // 따라서 살아있는 제스처가 있을 때만 소리를 켜고(첫 재생), 없으면(새로고침) 음소거로 계속 재생하며
+    // 소리 켜기 버튼을 노출한다.
+    if (data === window.YT.PlayerState.PLAYING && autoUnmuteRef.current) {
+      autoUnmuteRef.current = false;
+      const playingPlayer = playerRef.current;
+      const gestureAlive = navigator.userActivation ? navigator.userActivation.isActive : false;
+      if (gestureAlive && playingPlayer && typeof playingPlayer.unMute === "function") {
+        playingPlayer.unMute();
+        setNeedsUnmute(false);
+      } else {
+        setNeedsUnmute(true);
+      }
+    }
     if (initialPlayGuardRef.current && !applyingRemoteRef.current) {
       if (data === window.YT.PlayerState.PLAYING) {
         const player = playerRef.current;
@@ -2590,6 +2618,26 @@ function RoomPage({ roomId }: { roomId: string }) {
     }, delay);
   }
 
+  // 같이 보기 재생은 항상 사용자 클릭에서 ~3초 떨어진 서버 명령(또는 새로고침 후 onReady)에서
+  // 시작되므로, 음소거 없이 playVideo()를 호출하면 브라우저 자동재생 정책에 막혀 검정화면이 된다.
+  // 음소거 상태에서 재생을 시작하면 항상 허용되고, 실제 PLAYING이 되면 음소거를 해제한다.
+  function safePlay(player: YouTubePlayer | null) {
+    if (!hasPlayerApi(player)) return;
+    if (typeof player.mute === "function" && typeof player.unMute === "function") {
+      player.mute();
+      autoUnmuteRef.current = true;
+    }
+    player.playVideo();
+  }
+
+  // 사용자 클릭(제스처) 안에서 호출되어야 한다. 음소거 자동재생으로 켜진 소리를 안전하게 켠다.
+  function enableSound() {
+    const player = playerRef.current;
+    if (player && typeof player.unMute === "function") player.unMute();
+    autoUnmuteRef.current = false;
+    setNeedsUnmute(false);
+  }
+
   function applyRemoteCommand(command: RemoteCommand) {
     setResumePrompt(null);
     clearCountdown();
@@ -2603,7 +2651,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     }
     if (command.playback.state === "playing") {
       clearInitialPlayGuard();
-      player.playVideo();
+      safePlay(player);
     }
     if (command.playback.state === "paused") {
       releaseInitialPlayGuard(300);
@@ -2674,7 +2722,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       onComplete?.();
       if (playLocally && hasPlayerApi(playerRef.current)) {
         applyingRemoteRef.current = true;
-        playerRef.current.playVideo();
+        safePlay(playerRef.current);
         window.setTimeout(() => {
           applyingRemoteRef.current = false;
         }, 500);
@@ -2706,7 +2754,7 @@ function RoomPage({ roomId }: { roomId: string }) {
     if (!playback || !hasPlayerApi(player)) return;
     applyingRemoteRef.current = true;
     player.seekTo(playback.time, true);
-    if (playback.state === "playing") player.playVideo();
+    if (playback.state === "playing") safePlay(player);
     if (playback.state === "paused") player.pauseVideo();
     window.setTimeout(() => {
       applyingRemoteRef.current = false;
@@ -3343,6 +3391,13 @@ function RoomPage({ roomId }: { roomId: string }) {
                   <Play size={22} />
                   같이 재생 시작
                 </span>
+              </button>
+            )}
+
+            {needsUnmute && (
+              <button className="unmute-overlay" type="button" onClick={enableSound}>
+                <Volume2 size={18} />
+                소리 켜기
               </button>
             )}
 
